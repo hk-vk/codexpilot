@@ -1,6 +1,8 @@
 pub mod api_bridge;
 pub mod auth;
 pub mod auth_env_telemetry;
+pub mod github_copilot;
+pub mod github_copilot_storage;
 pub mod provider_auth;
 pub mod token_data;
 

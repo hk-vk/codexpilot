@@ -13,6 +13,17 @@ use codex_login::AuthCredentialsStoreMode;
 use codex_login::CLIENT_ID;
 use codex_login::CodexAuth;
 use codex_login::ServerOptions;
+use codex_login::github_copilot::build_github_copilot_client;
+use codex_login::github_copilot::exchange_github_copilot_access_token;
+use codex_login::github_copilot::github_copilot_access_token_is_stale;
+use codex_login::github_copilot::normalize_github_domain;
+use codex_login::github_copilot::poll_github_device_access_token;
+use codex_login::github_copilot::refresh_github_copilot_auth;
+use codex_login::github_copilot::request_github_device_code;
+use codex_login::github_copilot_storage::GitHubCopilotAuth;
+use codex_login::github_copilot_storage::delete_github_copilot_auth;
+use codex_login::github_copilot_storage::load_github_copilot_auth;
+use codex_login::github_copilot_storage::save_github_copilot_auth;
 use codex_login::login_with_api_key;
 use codex_login::logout;
 use codex_login::run_device_code_login;
@@ -313,6 +324,171 @@ pub async fn run_login_with_device_code_fallback_to_browser(
     }
 }
 
+pub async fn run_login_with_github_copilot(
+    cli_config_overrides: CliConfigOverrides,
+    enterprise_url: Option<String>,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides).await;
+    let _login_log_guard = init_login_file_logging(&config);
+    tracing::info!(enterprise_url = ?enterprise_url.as_deref(), "starting GitHub Copilot login flow");
+
+    let enterprise_domain = match enterprise_url {
+        Some(value) => match normalize_github_domain(&value) {
+            Some(domain) => Some(domain),
+            None => {
+                eprintln!("Invalid GitHub Enterprise URL or domain: {value}");
+                std::process::exit(1);
+            }
+        },
+        None => None,
+    };
+
+    let client = match build_github_copilot_client() {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("Error building GitHub Copilot login client: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    let device_code = match request_github_device_code(&client, enterprise_domain.as_deref(), None).await {
+        Ok(device_code) => device_code,
+        Err(err) => {
+            eprintln!("Error starting GitHub Copilot device login: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    eprintln!(
+        "Open this URL and enter the code:\n\n{}\n\nCode: {}\n",
+        device_code.verification_uri, device_code.user_code
+    );
+    eprintln!("Waiting for GitHub authorization...");
+
+    let github_access_token = match poll_github_device_access_token(
+        &client,
+        &device_code,
+        enterprise_domain.as_deref(),
+        None,
+    )
+    .await
+    {
+        Ok(token) => token,
+        Err(err) => {
+            eprintln!("Error completing GitHub device login: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    let copilot_access_token = match exchange_github_copilot_access_token(
+        &client,
+        &github_access_token,
+        enterprise_domain.as_deref(),
+    )
+    .await
+    {
+        Ok(token) => token,
+        Err(err) => {
+            eprintln!("Error exchanging GitHub Copilot token: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    let auth = GitHubCopilotAuth::new(
+        github_access_token,
+        copilot_access_token.token,
+        copilot_access_token.expires_at,
+        copilot_access_token.api_base_url,
+        enterprise_domain,
+    );
+
+    match save_github_copilot_auth(&config.codex_home, &auth) {
+        Ok(()) => {
+            eprintln!("Successfully logged in with GitHub Copilot");
+            std::process::exit(0);
+        }
+        Err(err) => {
+            eprintln!("Error saving GitHub Copilot credentials: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub async fn run_print_github_copilot_provider_config(
+    cli_config_overrides: CliConfigOverrides,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides).await;
+    let base_url = match load_github_copilot_auth(&config.codex_home) {
+        Ok(Some(auth)) => auth.api_base_url,
+        Ok(None) => "https://api.githubcopilot.com".to_string(),
+        Err(err) => {
+            eprintln!("Error loading GitHub Copilot credentials: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    println!("[model_providers.github-copilot]");
+    println!("name = \"GitHub Copilot\"");
+    println!("base_url = \"{base_url}\"");
+    println!("wire_api = \"responses\"");
+    println!("http_headers = {{ Openai-Intent = \"conversation-edits\" }}");
+    println!();
+    println!("[model_providers.github-copilot.auth]");
+    println!("command = \"codex\"");
+    println!("args = [\"login\", \"github-copilot-token\"]");
+    println!("refresh_interval_ms = 240000");
+    println!();
+    println!("model_provider = \"github-copilot\"");
+    std::process::exit(0);
+}
+
+pub async fn run_print_github_copilot_access_token(
+    cli_config_overrides: CliConfigOverrides,
+    refresh: bool,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides).await;
+    let auth = match load_github_copilot_auth(&config.codex_home) {
+        Ok(Some(auth)) => auth,
+        Ok(None) => {
+            eprintln!("GitHub Copilot is not logged in");
+            std::process::exit(1);
+        }
+        Err(err) => {
+            eprintln!("Error loading GitHub Copilot credentials: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    let auth = if refresh || github_copilot_access_token_is_stale(&auth) {
+        let client = match build_github_copilot_client() {
+            Ok(client) => client,
+            Err(err) => {
+                eprintln!("Error building GitHub Copilot client: {err}");
+                std::process::exit(1);
+            }
+        };
+
+        match refresh_github_copilot_auth(&client, &auth).await {
+            Ok(refreshed) => {
+                if let Err(err) = save_github_copilot_auth(&config.codex_home, &refreshed) {
+                    eprintln!("Error saving refreshed GitHub Copilot credentials: {err}");
+                    std::process::exit(1);
+                }
+                refreshed
+            }
+            Err(err) => {
+                eprintln!("Error refreshing GitHub Copilot access token: {err}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        auth
+    };
+
+    println!("{}", auth.copilot_access_token);
+    std::process::exit(0);
+}
+
 pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
     let config = load_config_or_exit(cli_config_overrides).await;
 
@@ -333,10 +509,21 @@ pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
                 std::process::exit(0);
             }
         },
-        Ok(None) => {
-            eprintln!("Not logged in");
-            std::process::exit(1);
-        }
+        Ok(None) => match load_github_copilot_auth(&config.codex_home) {
+            Ok(Some(auth)) => {
+                let host = auth.enterprise_domain.as_deref().unwrap_or("github.com");
+                eprintln!("Logged in using GitHub Copilot ({host})");
+                std::process::exit(0);
+            }
+            Ok(None) => {
+                eprintln!("Not logged in");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("Error checking GitHub Copilot login status: {e}");
+                std::process::exit(1);
+            }
+        },
         Err(e) => {
             eprintln!("Error checking login status: {e}");
             std::process::exit(1);
@@ -347,20 +534,29 @@ pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
 pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {
     let config = load_config_or_exit(cli_config_overrides).await;
 
-    match logout(&config.codex_home, config.cli_auth_credentials_store_mode) {
-        Ok(true) => {
-            eprintln!("Successfully logged out");
-            std::process::exit(0);
-        }
-        Ok(false) => {
-            eprintln!("Not logged in");
-            std::process::exit(0);
-        }
+    let removed_codex_auth = match logout(&config.codex_home, config.cli_auth_credentials_store_mode) {
+        Ok(removed) => removed,
         Err(e) => {
             eprintln!("Error logging out: {e}");
             std::process::exit(1);
         }
+    };
+
+    let removed_copilot_auth = match delete_github_copilot_auth(&config.codex_home) {
+        Ok(removed) => removed,
+        Err(e) => {
+            eprintln!("Error removing GitHub Copilot credentials: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    if removed_codex_auth || removed_copilot_auth {
+        eprintln!("Successfully logged out");
+        std::process::exit(0);
     }
+
+    eprintln!("Not logged in");
+    std::process::exit(0);
 }
 
 async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config {

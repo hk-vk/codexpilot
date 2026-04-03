@@ -15,7 +15,10 @@ use codex_cli::login::run_login_status;
 use codex_cli::login::run_login_with_api_key;
 use codex_cli::login::run_login_with_chatgpt;
 use codex_cli::login::run_login_with_device_code;
+use codex_cli::login::run_login_with_github_copilot;
 use codex_cli::login::run_logout;
+use codex_cli::login::run_print_github_copilot_access_token;
+use codex_cli::login::run_print_github_copilot_provider_config;
 use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
 use codex_exec::Command as ExecCommand;
@@ -311,10 +314,36 @@ struct LoginCommand {
     action: Option<LoginSubcommand>,
 }
 
+#[derive(Debug, Args)]
+struct GitHubCopilotLoginCommand {
+    /// GitHub Enterprise URL or host. Omit to use github.com.
+    #[arg(long = "enterprise-url", value_name = "URL_OR_HOST")]
+    enterprise_url: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct GitHubCopilotPrintTokenCommand {
+    /// Force a token refresh before printing.
+    #[arg(long = "refresh")]
+    refresh: bool,
+}
+
 #[derive(Debug, clap::Subcommand)]
 enum LoginSubcommand {
     /// Show login status.
     Status,
+
+    /// Log in with GitHub Copilot.
+    #[clap(name = "github-copilot")]
+    GitHubCopilot(GitHubCopilotLoginCommand),
+
+    /// Print a GitHub Copilot access token for command-backed provider auth.
+    #[clap(name = "github-copilot-token", hide = true)]
+    GitHubCopilotToken(GitHubCopilotPrintTokenCommand),
+
+    /// Print a provider config snippet for GitHub Copilot.
+    #[clap(name = "github-copilot-config", hide = true)]
+    GitHubCopilotConfig,
 }
 
 #[derive(Debug, Parser)]
@@ -800,6 +829,23 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             match login_cli.action {
                 Some(LoginSubcommand::Status) => {
                     run_login_status(login_cli.config_overrides).await;
+                }
+                Some(LoginSubcommand::GitHubCopilot(github_copilot)) => {
+                    run_login_with_github_copilot(
+                        login_cli.config_overrides,
+                        github_copilot.enterprise_url,
+                    )
+                    .await;
+                }
+                Some(LoginSubcommand::GitHubCopilotToken(github_copilot_token)) => {
+                    run_print_github_copilot_access_token(
+                        login_cli.config_overrides,
+                        github_copilot_token.refresh,
+                    )
+                    .await;
+                }
+                Some(LoginSubcommand::GitHubCopilotConfig) => {
+                    run_print_github_copilot_provider_config(login_cli.config_overrides).await;
                 }
                 None => {
                     if login_cli.use_device_code {
