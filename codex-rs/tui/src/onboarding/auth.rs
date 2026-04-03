@@ -10,6 +10,12 @@ use codex_app_server_protocol::LoginAccountParams;
 use codex_app_server_protocol::LoginAccountResponse;
 use codex_login::AuthCredentialsStoreMode;
 use codex_login::DeviceCode;
+use codex_login::github_copilot::build_github_copilot_client;
+use codex_login::github_copilot::exchange_github_copilot_access_token;
+use codex_login::github_copilot::poll_github_device_access_token;
+use codex_login::github_copilot::request_github_device_code;
+use codex_login::github_copilot_storage::load_github_copilot_auth;
+use codex_login::github_copilot_storage::save_github_copilot_auth;
 use codex_login::read_openai_api_key_from_env;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -92,6 +98,8 @@ pub(crate) enum SignInState {
     ChatGptDeviceCode(ContinueWithDeviceCodeState),
     ChatGptSuccessMessage,
     ChatGptSuccess,
+    GitHubCopilotDeviceCode(GitHubCopilotDeviceCodeState),
+    GitHubCopilotSuccess,
     ApiKeyEntry(ApiKeyInputState),
     ApiKeyConfigured,
 }
@@ -100,6 +108,7 @@ pub(crate) enum SignInState {
 pub(crate) enum SignInOption {
     ChatGpt,
     DeviceCode,
+    GitHubCopilot,
     ApiKey,
 }
 
@@ -127,6 +136,13 @@ pub(crate) struct ContinueWithDeviceCodeState {
     cancel: Option<Arc<Notify>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct GitHubCopilotDeviceCodeState {
+    user_code: Option<String>,
+    verification_uri: Option<String>,
+    cancel: Option<Arc<Notify>>,
+}
+
 impl KeyboardHandler for AuthModeWidget {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         if self.handle_api_key_entry_key_event(&key_event) {
@@ -148,6 +164,9 @@ impl KeyboardHandler for AuthModeWidget {
             }
             KeyCode::Char('3') => {
                 self.select_option_by_index(/*index*/ 2);
+            }
+            KeyCode::Char('4') => {
+                self.select_option_by_index(/*index*/ 3);
             }
             KeyCode::Enter => {
                 let sign_in_state = { (*self.sign_in_state.read().unwrap()).clone() };
@@ -213,6 +232,11 @@ impl AuthModeWidget {
                     cancel.notify_one();
                 }
             }
+            SignInState::GitHubCopilotDeviceCode(state) => {
+                if let Some(cancel) = &state.cancel {
+                    cancel.notify_one();
+                }
+            }
             _ => return,
         }
         *sign_in_state = SignInState::PickMode;
@@ -242,6 +266,7 @@ impl AuthModeWidget {
         if self.is_chatgpt_login_allowed() {
             options.push(SignInOption::DeviceCode);
         }
+        options.push(SignInOption::GitHubCopilot);
         if self.is_api_login_allowed() {
             options.push(SignInOption::ApiKey);
         }
@@ -254,6 +279,7 @@ impl AuthModeWidget {
             options.push(SignInOption::ChatGpt);
             options.push(SignInOption::DeviceCode);
         }
+        options.push(SignInOption::GitHubCopilot);
         if self.is_api_login_allowed() {
             options.push(SignInOption::ApiKey);
         }
@@ -294,6 +320,9 @@ impl AuthModeWidget {
                     self.start_device_code_login();
                 }
             }
+            SignInOption::GitHubCopilot => {
+                self.start_github_copilot_login();
+            }
             SignInOption::ApiKey => {
                 if self.is_api_login_allowed() {
                     self.start_api_key_entry();
@@ -315,7 +344,7 @@ impl AuthModeWidget {
         let mut lines: Vec<Line> = vec![
             Line::from(vec![
                 "  ".into(),
-                "Sign in with ChatGPT to use Codex as part of your paid plan".into(),
+                "Sign in with Codex and GitHub Copilot to unlock both auth flows".into(),
             ]),
             Line::from(vec![
                 "  ".into(),
@@ -359,6 +388,11 @@ impl AuthModeWidget {
             "Usage included with Plus, Pro, Business, and Enterprise plans"
         };
         let device_code_description = "Sign in from another device with a one-time code";
+        let github_copilot_description = if self.has_github_copilot_login() {
+            "Already connected"
+        } else {
+            "Connect your GitHub account and Copilot subscription"
+        };
 
         for (idx, option) in self.displayed_sign_in_options().into_iter().enumerate() {
             match option {
@@ -376,6 +410,14 @@ impl AuthModeWidget {
                         option,
                         "Sign in with Device Code",
                         device_code_description,
+                    ));
+                }
+                SignInOption::GitHubCopilot => {
+                    lines.extend(create_mode_item(
+                        idx,
+                        option,
+                        "Sign in with GitHub Copilot",
+                        github_copilot_description,
                     ));
                 }
                 SignInOption::ApiKey => {
@@ -495,6 +537,54 @@ impl AuthModeWidget {
             "✓ Signed in with your ChatGPT account"
                 .fg(Color::Green)
                 .into(),
+        ];
+
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
+    }
+
+    fn render_github_copilot_device_code(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        state: &GitHubCopilotDeviceCodeState,
+    ) {
+        let verification_uri = state
+            .verification_uri
+            .clone()
+            .unwrap_or_else(|| "https://github.com/login/device".to_string());
+        let mut lines = vec![
+            "> Sign in with GitHub Copilot".bold().into(),
+            "".into(),
+            "  Open this URL in your browser:".into(),
+            Line::from(vec![
+                "  ".into(),
+                verification_uri.clone().cyan().underlined(),
+            ]),
+            "".into(),
+        ];
+        if let Some(code) = state.user_code.as_deref() {
+            lines.push("  Enter this one-time code:".into());
+            lines.push(Line::from(vec!["  ".into(), code.bold().yellow()]));
+            lines.push("".into());
+        } else {
+            lines.push("  Requesting a device code…".dim().into());
+            lines.push("".into());
+        }
+        lines.push("  Press Esc to cancel".dim().into());
+
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
+        mark_url_hyperlink(buf, area, &verification_uri);
+    }
+
+    fn render_github_copilot_success(&self, area: Rect, buf: &mut Buffer) {
+        let lines = vec![
+            "✓ Signed in with GitHub Copilot".fg(Color::Green).into(),
+            "".into(),
+            "  GitHub Copilot models and token-backed auth are ready.".into(),
         ];
 
         Paragraph::new(lines)
@@ -737,11 +827,27 @@ impl AuthModeWidget {
 
     fn handle_existing_chatgpt_login(&mut self) -> bool {
         if matches!(
-            self.login_status,
-            LoginStatus::AuthMode(AppServerAuthMode::Chatgpt)
-                | LoginStatus::AuthMode(AppServerAuthMode::ChatgptAuthTokens)
+            self.login_status.codex_auth_mode,
+            Some(AppServerAuthMode::Chatgpt | AppServerAuthMode::ChatgptAuthTokens)
         ) {
             *self.sign_in_state.write().unwrap() = SignInState::ChatGptSuccess;
+            self.request_frame.schedule_frame();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn has_github_copilot_login(&self) -> bool {
+        self.login_status.github_copilot_authenticated
+            || load_github_copilot_auth(&self.codex_home)
+                .map(|auth| auth.is_some())
+                .unwrap_or(false)
+    }
+
+    fn handle_existing_github_copilot_login(&mut self) -> bool {
+        if self.has_github_copilot_login() {
+            *self.sign_in_state.write().unwrap() = SignInState::GitHubCopilotSuccess;
             self.request_frame.schedule_frame();
             true
         } else {
@@ -803,6 +909,75 @@ impl AuthModeWidget {
         headless_chatgpt_login::start_headless_chatgpt_login(self);
     }
 
+    fn start_github_copilot_login(&mut self) {
+        if self.handle_existing_github_copilot_login() {
+            return;
+        }
+
+        self.set_error(None);
+        let sign_in_state = self.sign_in_state.clone();
+        let error = self.error.clone();
+        let request_frame = self.request_frame.clone();
+        let codex_home = self.codex_home.clone();
+        tokio::spawn(async move {
+            let cancel = Arc::new(Notify::new());
+            *sign_in_state.write().unwrap() =
+                SignInState::GitHubCopilotDeviceCode(GitHubCopilotDeviceCodeState {
+                    user_code: None,
+                    verification_uri: None,
+                    cancel: Some(cancel.clone()),
+                });
+            request_frame.schedule_frame();
+
+            let result = async {
+                let client = build_github_copilot_client().map_err(std::io::Error::other)?;
+                let device_code = request_github_device_code(&client, None, None).await?;
+                if let Err(err) = webbrowser::open(&device_code.verification_uri) {
+                    tracing::warn!("failed to open browser for GitHub Copilot login URL: {err}");
+                }
+                *sign_in_state.write().unwrap() = SignInState::GitHubCopilotDeviceCode(
+                    GitHubCopilotDeviceCodeState {
+                        user_code: Some(device_code.user_code.clone()),
+                        verification_uri: Some(device_code.verification_uri.clone()),
+                        cancel: Some(cancel.clone()),
+                    },
+                );
+                request_frame.schedule_frame();
+
+                tokio::select! {
+                    _ = cancel.notified() => Err(std::io::Error::other("GitHub Copilot login canceled")),
+                    github_access_token = poll_github_device_access_token(&client, &device_code, None, None) => {
+                        let github_access_token = github_access_token?;
+                        let token = exchange_github_copilot_access_token(&client, &github_access_token, None).await?;
+                        let auth = codex_login::github_copilot_storage::GitHubCopilotAuth::new(
+                            github_access_token,
+                            token.token,
+                            token.expires_at,
+                            token.api_base_url,
+                            None,
+                        );
+                        save_github_copilot_auth(&codex_home, &auth)?;
+                        Ok(())
+                    }
+                }
+            }.await;
+
+            match result {
+                Ok(()) => {
+                    *error.write().unwrap() = None;
+                    *sign_in_state.write().unwrap() = SignInState::GitHubCopilotSuccess;
+                }
+                Err(err) => {
+                    *sign_in_state.write().unwrap() = SignInState::PickMode;
+                    if err.to_string() != "GitHub Copilot login canceled" {
+                        *error.write().unwrap() = Some(err.to_string());
+                    }
+                }
+            }
+            request_frame.schedule_frame();
+        });
+    }
+
     pub(crate) fn on_account_login_completed(
         &mut self,
         notification: AccountLoginCompletedNotification,
@@ -831,23 +1006,38 @@ impl AuthModeWidget {
     }
 
     pub(crate) fn on_account_updated(&mut self, notification: AccountUpdatedNotification) {
-        self.login_status = notification
-            .auth_mode
-            .map(LoginStatus::AuthMode)
-            .unwrap_or(LoginStatus::NotAuthenticated);
+        self.login_status.codex_auth_mode = notification.auth_mode;
     }
 }
 
 impl StepStateProvider for AuthModeWidget {
     fn get_step_state(&self) -> StepState {
+        if self.login_status.is_fully_authenticated() {
+            return StepState::Complete;
+        }
+
         let sign_in_state = self.sign_in_state.read().unwrap();
         match &*sign_in_state {
+            SignInState::ChatGptSuccessMessage | SignInState::ChatGptSuccess => {
+                if self.has_github_copilot_login() {
+                    StepState::Complete
+                } else {
+                    StepState::InProgress
+                }
+            }
+            SignInState::GitHubCopilotSuccess => {
+                if self.login_status.is_codex_authenticated() {
+                    StepState::Complete
+                } else {
+                    StepState::InProgress
+                }
+            }
+            SignInState::ApiKeyConfigured => StepState::Complete,
             SignInState::PickMode
             | SignInState::ApiKeyEntry(_)
             | SignInState::ChatGptContinueInBrowser(_)
             | SignInState::ChatGptDeviceCode(_)
-            | SignInState::ChatGptSuccessMessage => StepState::InProgress,
-            SignInState::ChatGptSuccess | SignInState::ApiKeyConfigured => StepState::Complete,
+            | SignInState::GitHubCopilotDeviceCode(_) => StepState::InProgress,
         }
     }
 }
@@ -865,11 +1055,17 @@ impl WidgetRef for AuthModeWidget {
             SignInState::ChatGptDeviceCode(state) => {
                 headless_chatgpt_login::render_device_code_login(self, area, buf, state);
             }
+            SignInState::GitHubCopilotDeviceCode(state) => {
+                self.render_github_copilot_device_code(area, buf, state);
+            }
             SignInState::ChatGptSuccessMessage => {
                 self.render_chatgpt_success_message(area, buf);
             }
             SignInState::ChatGptSuccess => {
                 self.render_chatgpt_success(area, buf);
+            }
+            SignInState::GitHubCopilotSuccess => {
+                self.render_github_copilot_success(area, buf);
             }
             SignInState::ApiKeyEntry(state) => {
                 self.render_api_key_entry(area, buf, state);
@@ -945,7 +1141,7 @@ mod tests {
             sign_in_state: Arc::new(RwLock::new(SignInState::PickMode)),
             codex_home: codex_home_path.clone(),
             cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
-            login_status: LoginStatus::NotAuthenticated,
+            login_status: LoginStatus::not_authenticated(),
             app_server_request_handle: AppServerRequestHandle::InProcess(client.request_handle()),
             forced_chatgpt_workspace_id: None,
             forced_login_method: Some(ForcedLoginMethod::Chatgpt),
@@ -984,13 +1180,13 @@ mod tests {
             &*widget.sign_in_state.read().unwrap(),
             SignInState::PickMode
         ));
-        assert_eq!(widget.login_status, LoginStatus::NotAuthenticated);
+        assert_eq!(widget.login_status, LoginStatus::not_authenticated());
     }
 
     #[tokio::test]
     async fn existing_chatgpt_auth_tokens_login_counts_as_signed_in() {
         let (mut widget, _tmp) = widget_forced_chatgpt().await;
-        widget.login_status = LoginStatus::AuthMode(AppServerAuthMode::ChatgptAuthTokens);
+        widget.login_status.codex_auth_mode = Some(AppServerAuthMode::ChatgptAuthTokens);
 
         let handled = widget.handle_existing_chatgpt_login();
 

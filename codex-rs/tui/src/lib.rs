@@ -34,11 +34,14 @@ use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::format_config_error_with_source;
 use codex_core::format_exec_policy_error_with_source;
 use codex_core::path_utils;
+use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::read_session_meta_line;
 use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_login::AuthConfig;
+use codex_login::CodexAuth;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::enforce_login_restrictions;
+use codex_login::github_copilot_storage::load_github_copilot_auth;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::SandboxMode;
@@ -59,6 +62,7 @@ use cwd_prompt::CwdPromptOutcome;
 use cwd_prompt::CwdSelection;
 use std::fs::OpenOptions;
 use std::future::Future;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -935,6 +939,21 @@ async fn run_ratatui_app(
 ) -> color_eyre::Result<AppExitInfo> {
     let remote_mode = matches!(&app_server_target, AppServerTarget::Remote { .. });
     color_eyre::install()?;
+    let mut initial_config = initial_config;
+    if !remote_mode
+        && reconcile_github_copilot_provider_on_startup(
+            &initial_config,
+            initial_config.active_profile.as_deref(),
+        )
+            .await?
+    {
+        initial_config = load_config_or_exit(
+            cli_kv_overrides.clone(),
+            overrides.clone(),
+            cloud_requirements.clone(),
+        )
+        .await;
+    }
 
     tooltips::announcement::prewarm();
 
@@ -998,13 +1017,10 @@ async fn run_ratatui_app(
     } else {
         None
     };
-    let login_status = if initial_config.model_provider.requires_openai_auth {
-        let Some(app_server) = onboarding_app_server.as_mut() else {
-            unreachable!("onboarding app server should exist when auth is required");
-        };
+    let login_status = if let Some(app_server) = onboarding_app_server.as_mut() {
         get_login_status(app_server, &initial_config).await?
     } else {
-        LoginStatus::NotAuthenticated
+        LoginStatus::not_authenticated()
     };
     let should_show_onboarding =
         should_show_onboarding(login_status, &initial_config, should_show_trust_screen_flag);
@@ -1556,23 +1572,119 @@ fn determine_alt_screen_mode(no_alt_screen: bool, tui_alternate_screen: AltScree
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoginStatus {
-    AuthMode(AppServerAuthMode),
-    NotAuthenticated,
+pub struct LoginStatus {
+    pub codex_auth_mode: Option<AppServerAuthMode>,
+    pub github_copilot_authenticated: bool,
+}
+
+impl LoginStatus {
+    pub fn not_authenticated() -> Self {
+        Self {
+            codex_auth_mode: None,
+            github_copilot_authenticated: false,
+        }
+    }
+
+    pub fn is_codex_authenticated(self) -> bool {
+        self.codex_auth_mode.is_some()
+    }
+
+    pub fn is_fully_authenticated(self) -> bool {
+        self.is_codex_authenticated() && self.github_copilot_authenticated
+    }
+
+    pub fn is_any_authenticated(self) -> bool {
+        self.is_codex_authenticated() || self.github_copilot_authenticated
+    }
+}
+
+fn current_codexpilot_command_path() -> String {
+    std::env::current_exe()
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "codexpilot".to_string())
+}
+
+fn github_copilot_provider_config_block(base_url: &str, command_path: &str) -> String {
+    format!(
+        "[model_providers.github-copilot]\nname = \"GitHub Copilot\"\nbase_url = \"{base_url}\"\nwire_api = \"responses\"\n\n[model_providers.github-copilot.auth]\ncommand = \"{command_path}\"\nargs = [\"login\", \"github-copilot-token\"]\nrefresh_interval_ms = 240000\n"
+    )
+}
+
+fn ensure_github_copilot_provider_config(codex_home: &std::path::Path, base_url: &str) -> std::io::Result<bool> {
+    let config_file = codex_home.join("config.toml");
+    let existing = match std::fs::read_to_string(&config_file) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err),
+    };
+
+    if existing.contains("[model_providers.github-copilot]") {
+        return Ok(false);
+    }
+
+    if let Some(parent) = config_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut file = OpenOptions::new().create(true).append(true).open(&config_file)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        file.write_all(b"\n")?;
+    }
+    if !existing.is_empty() {
+        file.write_all(b"\n")?;
+    }
+    let command_path = current_codexpilot_command_path();
+    file.write_all(github_copilot_provider_config_block(base_url, &command_path).as_bytes())?;
+    file.flush()?;
+    Ok(true)
+}
+
+async fn reconcile_github_copilot_provider_on_startup(
+    config: &Config,
+    active_profile: Option<&str>,
+) -> color_eyre::Result<bool> {
+    let Some(auth) = load_github_copilot_auth(&config.codex_home)? else {
+        return Ok(false);
+    };
+
+    let wrote_provider = ensure_github_copilot_provider_config(&config.codex_home, &auth.api_base_url)?;
+    let switched_provider = if config.model_provider_id != "github-copilot" {
+        ConfigEditsBuilder::new(&config.codex_home)
+            .with_profile(active_profile)
+            .set_model_provider(Some("github-copilot"))
+            .apply()
+            .await
+            .map_err(|err| color_eyre::eyre::eyre!(err))?;
+        true
+    } else {
+        false
+    };
+
+    Ok(wrote_provider || switched_provider)
 }
 
 async fn get_login_status(
     app_server: &mut AppServerSession,
     config: &Config,
 ) -> color_eyre::Result<LoginStatus> {
-    if !config.model_provider.requires_openai_auth {
-        return Ok(LoginStatus::NotAuthenticated);
-    }
+    let github_copilot_authenticated = load_github_copilot_auth(&config.codex_home)
+        .map(|auth| auth.is_some())
+        .unwrap_or(false);
 
-    let bootstrap = app_server.bootstrap(config).await?;
-    Ok(match bootstrap.account_auth_mode {
-        Some(auth_mode) => LoginStatus::AuthMode(auth_mode),
-        None => LoginStatus::NotAuthenticated,
+    let codex_auth_mode = if config.model_provider.requires_openai_auth
+        || CodexAuth::from_auth_storage(&config.codex_home, config.cli_auth_credentials_store_mode)
+            .map(|auth| auth.is_some())
+            .unwrap_or(false)
+    {
+        app_server.bootstrap(config).await?.account_auth_mode
+    } else {
+        None
+    };
+
+    Ok(LoginStatus {
+        codex_auth_mode,
+        github_copilot_authenticated,
     })
 }
 
@@ -1637,7 +1749,7 @@ fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool 
         return false;
     }
 
-    login_status == LoginStatus::NotAuthenticated
+    !login_status.is_fully_authenticated()
 }
 
 #[cfg(test)]

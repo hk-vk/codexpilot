@@ -1,13 +1,23 @@
 use super::AuthRequestTelemetryContext;
+use super::GITHUB_COPILOT_INITIATOR_HEADER;
+use super::GITHUB_COPILOT_INTENT_HEADER;
+use super::GITHUB_COPILOT_PROVIDER_NAME;
+use super::GITHUB_COPILOT_VISION_HEADER;
 use super::ModelClient;
 use super::PendingUnauthorizedRetry;
 use super::UnauthorizedRecoveryExecution;
+use super::build_provider_responses_headers;
+use super::infer_github_copilot_initiator;
 use codex_api::api_bridge::CoreAuthProvider;
 use codex_app_server_protocol::AuthMode;
 use codex_model_provider_info::WireApi;
 use codex_model_provider_info::create_oss_provider_with_base_url;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::FunctionCallOutputPayload;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -73,6 +83,13 @@ fn test_session_telemetry() -> SessionTelemetry {
     )
 }
 
+fn test_github_copilot_provider() -> codex_model_provider_info::ModelProviderInfo {
+    let mut provider =
+        create_oss_provider_with_base_url("https://api.githubcopilot.com/v1", WireApi::Responses);
+    provider.name = GITHUB_COPILOT_PROVIDER_NAME.to_string();
+    provider
+}
+
 #[test]
 fn build_subagent_headers_sets_other_subagent_label() {
     let client = test_model_client(SessionSource::SubAgent(SubAgentSource::Other(
@@ -120,4 +137,100 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
     assert!(auth_context.retry_after_unauthorized);
     assert_eq!(auth_context.recovery_mode, Some("managed"));
     assert_eq!(auth_context.recovery_phase, Some("refresh_token"));
+}
+
+#[test]
+fn infer_github_copilot_initiator_uses_last_item_role() {
+    let user_input = vec![ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "hello".to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    }];
+    assert_eq!(infer_github_copilot_initiator(&user_input), "user");
+
+    let tool_output = vec![ResponseItem::FunctionCallOutput {
+        call_id: "call-1".to_string(),
+        output: FunctionCallOutputPayload::from_text("done".to_string()),
+    }];
+    assert_eq!(infer_github_copilot_initiator(&tool_output), "agent");
+}
+
+#[test]
+fn build_provider_responses_headers_adds_copilot_headers_for_images_and_tool_outputs() {
+    let provider = test_github_copilot_provider();
+    let input = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![
+                ContentItem::InputText {
+                    text: "check this".to_string(),
+                },
+                ContentItem::InputImage {
+                    image_url: "data:image/png;base64,abc".to_string(),
+                },
+            ],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::CustomToolCallOutput {
+            call_id: "call-1".to_string(),
+            name: Some("tool".to_string()),
+            output: FunctionCallOutputPayload::from_content_items(vec![
+                FunctionCallOutputContentItem::InputImage {
+                    image_url: "data:image/png;base64,def".to_string(),
+                    detail: None,
+                },
+            ]),
+        },
+    ];
+
+    let headers = build_provider_responses_headers(&provider, &input);
+
+    assert_eq!(
+        headers
+            .get(GITHUB_COPILOT_INTENT_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some("conversation-edits")
+    );
+    assert_eq!(
+        headers
+            .get(GITHUB_COPILOT_INITIATOR_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some("agent")
+    );
+    assert_eq!(
+        headers
+            .get(GITHUB_COPILOT_VISION_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some("true")
+    );
+}
+
+#[test]
+fn build_provider_responses_headers_skips_non_copilot_providers() {
+    let provider = create_oss_provider_with_base_url("https://example.com/v1", WireApi::Responses);
+    let headers = build_provider_responses_headers(&provider, &[]);
+    assert_eq!(headers.len(), 0);
+}
+
+#[test]
+fn build_provider_responses_headers_accepts_copilot_base_url_even_with_custom_name() {
+    let mut provider = create_oss_provider_with_base_url(
+        "https://api.individual.githubcopilot.com/v1",
+        WireApi::Responses,
+    );
+    provider.name = "Custom Provider Name".to_string();
+
+    let headers = build_provider_responses_headers(&provider, &[]);
+    assert_eq!(
+        headers
+            .get(GITHUB_COPILOT_INTENT_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some("conversation-edits")
+    );
 }

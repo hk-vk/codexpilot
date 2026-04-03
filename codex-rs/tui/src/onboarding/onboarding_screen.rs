@@ -92,7 +92,7 @@ impl OnboardingScreen {
         let cli_auth_credentials_store_mode = config.cli_auth_credentials_store_mode;
         let mut steps: Vec<Step> = Vec::new();
         steps.push(Step::Welcome(WelcomeWidget::new(
-            !matches!(login_status, LoginStatus::NotAuthenticated),
+            login_status.is_any_authenticated(),
             tui.frame_requester(),
             config.animations,
         )));

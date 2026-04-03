@@ -240,7 +240,7 @@ async fn plan_reasoning_scope_popup_all_modes_persists_global_and_plan_override(
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::PersistModelSelection { model, effort: Some(ReasoningEffortConfig::High) }
+            AppEvent::PersistModelSelection { model, effort: Some(ReasoningEffortConfig::High), .. }
                 if model == "gpt-5.1-codex-max"
         )),
         "expected global model reasoning selection persistence; events: {events:?}"

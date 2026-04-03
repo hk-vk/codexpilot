@@ -67,6 +67,8 @@ use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
@@ -121,6 +123,10 @@ pub const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
 pub const X_CODEX_TURN_METADATA_HEADER: &str = "x-codex-turn-metadata";
 pub const X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER: &str =
     "x-responsesapi-include-timing-metrics";
+const GITHUB_COPILOT_PROVIDER_NAME: &str = "GitHub Copilot";
+const GITHUB_COPILOT_INTENT_HEADER: &str = "Openai-Intent";
+const GITHUB_COPILOT_INITIATOR_HEADER: &str = "X-Initiator";
+const GITHUB_COPILOT_VISION_HEADER: &str = "Copilot-Vision-Request";
 const RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const RESPONSES_ENDPOINT: &str = "/responses";
 const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
@@ -761,19 +767,25 @@ impl ModelClientSession {
     /// regardless of transport choice.
     fn build_responses_options(
         &self,
+        prompt: &Prompt,
         turn_metadata_header: Option<&str>,
         compression: Compression,
     ) -> ApiResponsesOptions {
         let turn_metadata_header = parse_turn_metadata_header(turn_metadata_header);
         let conversation_id = self.client.state.conversation_id.to_string();
+        let mut extra_headers = build_responses_headers(
+            self.client.state.beta_features_header.as_deref(),
+            Some(&self.turn_state),
+            turn_metadata_header.as_ref(),
+        );
+        extra_headers.extend(build_provider_responses_headers(
+            &self.client.state.provider,
+            &prompt.get_formatted_input(),
+        ));
         ApiResponsesOptions {
             conversation_id: Some(conversation_id),
             session_source: Some(self.client.state.session_source.clone()),
-            extra_headers: build_responses_headers(
-                self.client.state.beta_features_header.as_deref(),
-                Some(&self.turn_state),
-                turn_metadata_header.as_ref(),
-            ),
+            extra_headers,
             compression,
             turn_state: Some(Arc::clone(&self.turn_state)),
         }
@@ -1043,7 +1055,7 @@ impl ModelClientSession {
                 self.client.state.auth_env_telemetry.clone(),
             );
             let compression = self.responses_request_compression(client_setup.auth.as_ref());
-            let options = self.build_responses_options(turn_metadata_header, compression);
+            let options = self.build_responses_options(prompt, turn_metadata_header, compression);
 
             let request = self.build_responses_request(
                 &client_setup.api_provider,
@@ -1126,7 +1138,7 @@ impl ModelClientSession {
             );
             let compression = self.responses_request_compression(client_setup.auth.as_ref());
 
-            let options = self.build_responses_options(turn_metadata_header, compression);
+            let options = self.build_responses_options(prompt, turn_metadata_header, compression);
             let request = self.build_responses_request(
                 &client_setup.api_provider,
                 prompt,
@@ -1376,6 +1388,65 @@ fn build_ws_client_metadata(turn_metadata_header: Option<&str>) -> Option<HashMa
     let mut client_metadata = HashMap::new();
     client_metadata.insert(X_CODEX_TURN_METADATA_HEADER.to_string(), turn_metadata);
     Some(client_metadata)
+}
+
+fn build_provider_responses_headers(
+    provider: &ModelProviderInfo,
+    input: &[ResponseItem],
+) -> ApiHeaderMap {
+    let mut headers = ApiHeaderMap::new();
+    if !is_github_copilot_provider(provider) {
+        return headers;
+    }
+
+    headers.insert(
+        GITHUB_COPILOT_INTENT_HEADER,
+        HeaderValue::from_static("conversation-edits"),
+    );
+    headers.insert(
+        GITHUB_COPILOT_INITIATOR_HEADER,
+        HeaderValue::from_static(infer_github_copilot_initiator(input)),
+    );
+    if prompt_has_github_copilot_vision_input(input) {
+        headers.insert(
+            GITHUB_COPILOT_VISION_HEADER,
+            HeaderValue::from_static("true"),
+        );
+    }
+
+    headers
+}
+
+fn is_github_copilot_provider(provider: &ModelProviderInfo) -> bool {
+    provider.name == GITHUB_COPILOT_PROVIDER_NAME
+        || provider.base_url.as_deref().is_some_and(|base_url| {
+            base_url.contains("githubcopilot.com") || base_url.contains("copilot-api.")
+        })
+}
+
+fn infer_github_copilot_initiator(input: &[ResponseItem]) -> &'static str {
+    match input.last() {
+        Some(ResponseItem::Message { role, .. }) if role == "user" => "user",
+        Some(_) => "agent",
+        None => "user",
+    }
+}
+
+fn prompt_has_github_copilot_vision_input(input: &[ResponseItem]) -> bool {
+    input.iter().any(|item| match item {
+        ResponseItem::Message { content, .. } => content
+            .iter()
+            .any(|content_item| matches!(content_item, ContentItem::InputImage { .. })),
+        ResponseItem::FunctionCallOutput { output, .. }
+        | ResponseItem::CustomToolCallOutput { output, .. } => {
+            output.content_items().is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| matches!(item, FunctionCallOutputContentItem::InputImage { .. }))
+            })
+        }
+        _ => false,
+    })
 }
 
 /// Builds the extra headers attached to Responses API requests.

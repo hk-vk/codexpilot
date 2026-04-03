@@ -5191,13 +5191,7 @@ impl ChatWidget {
                 self.request_quit_without_confirmation();
             }
             SlashCommand::Logout => {
-                if let Err(e) = codex_login::logout(
-                    &self.config.codex_home,
-                    self.config.cli_auth_credentials_store_mode,
-                ) {
-                    tracing::error!("failed to logout: {e}");
-                }
-                self.request_quit_without_confirmation();
+                self.open_logout_popup();
             }
             // SlashCommand::Undo => {
             //     self.app_event_tx.send(AppEvent::CodexOp(Op::Undo));
@@ -7672,8 +7666,7 @@ impl ChatWidget {
         });
     }
 
-    /// Open a popup to choose a quick auto model. Selecting "All models"
-    /// opens the full picker with every available preset.
+    /// Open a popup to choose a provider first, then a model within that provider.
     pub(crate) fn open_model_popup(&mut self) {
         if !self.is_session_configured() {
             self.add_info_message(
@@ -7683,17 +7676,60 @@ impl ChatWidget {
             return;
         }
 
-        let presets: Vec<ModelPreset> = match self.model_catalog.try_list_models() {
-            Ok(models) => models,
-            Err(_) => {
-                self.add_info_message(
-                    "Models are being updated; please try /model again in a moment.".to_string(),
-                    /*hint*/ None,
-                );
-                return;
-            }
-        };
-        self.open_model_popup_with_presets(presets);
+        let has_copilot_provider = self.config.model_providers.contains_key("github-copilot")
+            || codex_login::github_copilot_storage::load_github_copilot_auth(&self.config.codex_home)
+                .map(|auth| auth.is_some())
+                .unwrap_or(false);
+        if !has_copilot_provider {
+            let presets: Vec<ModelPreset> = match self.model_catalog.try_list_models() {
+                Ok(models) => models,
+                Err(_) => {
+                    self.add_info_message(
+                        "Models are being updated; please try /model again in a moment.".to_string(),
+                        /*hint*/ None,
+                    );
+                    return;
+                }
+            };
+            self.open_model_popup_with_presets_for_provider(presets, None);
+            return;
+        }
+
+        let current_provider = self.config.model_provider_id.clone();
+        let items = vec![
+            SelectionItem {
+                name: "OpenAI".to_string(),
+                description: Some("Show the current OpenAI/Codex model picker.".to_string()),
+                is_current: current_provider == "openai",
+                actions: vec![Box::new(|tx| {
+                    tx.send(AppEvent::OpenModelProviderPicker {
+                        provider_id: "openai".to_string(),
+                    });
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "GitHub Copilot".to_string(),
+                description: Some("Show models saved under the GitHub Copilot provider.".to_string()),
+                is_current: current_provider == "github-copilot",
+                actions: vec![Box::new(|tx| {
+                    tx.send(AppEvent::OpenModelProviderPicker {
+                        provider_id: "github-copilot".to_string(),
+                    });
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ];
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Select Provider".to_string()),
+            subtitle: Some("Choose a provider before picking a model.".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            ..Default::default()
+        });
     }
 
     pub(crate) fn open_personality_popup(&mut self) {
@@ -7712,6 +7748,37 @@ impl ChatWidget {
             return;
         }
         self.open_personality_popup_for_current_model();
+    }
+
+    pub(crate) fn open_logout_popup(&mut self) {
+        let items = vec![
+            SelectionItem {
+                name: "Log out Codex".to_string(),
+                description: Some("Remove locally stored Codex credentials.".to_string()),
+                actions: vec![Box::new(|tx| {
+                    tx.send(AppEvent::LogoutCodexAuth);
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "Log out GitHub Copilot".to_string(),
+                description: Some("Remove locally stored GitHub Copilot credentials.".to_string()),
+                actions: vec![Box::new(|tx| {
+                    tx.send(AppEvent::LogoutGitHubCopilotAuth);
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ];
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Logout".to_string()),
+            subtitle: Some("Choose which local credentials to remove.".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            ..Default::default()
+        });
     }
 
     fn open_personality_popup_for_current_model(&mut self) {
@@ -7963,16 +8030,40 @@ impl ChatWidget {
     }
 
     pub(crate) fn open_model_popup_with_presets(&mut self, presets: Vec<ModelPreset>) {
+        self.open_model_popup_with_presets_for_provider(presets, None);
+    }
+
+    fn provider_model_name(provider_id: Option<&str>, model: &str) -> String {
+        match provider_id {
+            Some("github-copilot") => format!("{model} (copilot)"),
+            _ => model.to_string(),
+        }
+    }
+
+    fn provider_title(provider_id: Option<&str>) -> &'static str {
+        match provider_id {
+            Some("github-copilot") => "GitHub Copilot",
+            _ => "OpenAI",
+        }
+    }
+
+    fn open_model_popup_with_presets_for_provider(
+        &mut self,
+        presets: Vec<ModelPreset>,
+        provider_id: Option<&str>,
+    ) {
         let presets: Vec<ModelPreset> = presets
             .into_iter()
             .filter(|preset| preset.show_in_picker)
             .collect();
 
         let current_model = self.current_model();
+        let provider_matches_current = provider_id.unwrap_or(self.config.model_provider_id.as_str())
+            == self.config.model_provider_id;
         let current_label = presets
             .iter()
             .find(|preset| preset.model.as_str() == current_model)
-            .map(|preset| preset.model.to_string())
+            .map(|preset| Self::provider_model_name(provider_id, &preset.model))
             .unwrap_or_else(|| self.model_display_name().to_string());
 
         let (mut auto_presets, other_presets): (Vec<ModelPreset>, Vec<ModelPreset>) = presets
@@ -7980,11 +8071,12 @@ impl ChatWidget {
             .partition(|preset| Self::is_auto_model(&preset.model));
 
         if auto_presets.is_empty() {
-            self.open_all_models_popup(other_presets);
+            self.open_all_models_popup_for_provider(other_presets, provider_id);
             return;
         }
 
         auto_presets.sort_by_key(|preset| Self::auto_model_order(&preset.model));
+        let target_provider_id = provider_id.map(ToOwned::to_owned);
         let mut items: Vec<SelectionItem> = auto_presets
             .into_iter()
             .map(|preset| {
@@ -7996,14 +8088,16 @@ impl ChatWidget {
                     Some(preset.default_reasoning_effort),
                 );
                 let actions = Self::model_selection_actions(
+                    target_provider_id.clone(),
                     model.clone(),
                     Some(preset.default_reasoning_effort),
                     should_prompt_plan_mode_scope,
+                    provider_matches_current,
                 );
                 SelectionItem {
-                    name: model.clone(),
+                    name: Self::provider_model_name(provider_id, &model),
                     description,
-                    is_current: model.as_str() == current_model,
+                    is_current: provider_matches_current && model.as_str() == current_model,
                     is_default: preset.is_default,
                     actions,
                     dismiss_on_select: true,
@@ -8014,19 +8108,22 @@ impl ChatWidget {
 
         if !other_presets.is_empty() {
             let all_models = other_presets;
+            let provider_id = target_provider_id.clone();
+            let provider_id_for_name = provider_id.clone();
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
                 tx.send(AppEvent::OpenAllModelsPopup {
+                    provider_id: provider_id.clone(),
                     models: all_models.clone(),
                 });
             })];
 
-            let is_current = !items.iter().any(|item| item.is_current);
+            let is_current = provider_matches_current && !items.iter().any(|item| item.is_current);
             let description = Some(format!(
                 "Choose a specific model and reasoning level (current: {current_label})"
             ));
 
             items.push(SelectionItem {
-                name: "All models".to_string(),
+                name: format!("All models ({})", Self::provider_title(provider_id_for_name.as_deref())),
                 description,
                 is_current,
                 actions,
@@ -8036,8 +8133,8 @@ impl ChatWidget {
         }
 
         let header = self.model_menu_header(
-            "Select Model",
-            "Pick a quick auto mode or browse all models.",
+            "Select Provider Model",
+            &format!("Browse {} models.", Self::provider_title(provider_id)),
         );
         self.bottom_pane.show_selection_view(SelectionViewParams {
             footer_hint: Some(standard_popup_hint_line()),
@@ -8061,6 +8158,14 @@ impl ChatWidget {
     }
 
     pub(crate) fn open_all_models_popup(&mut self, presets: Vec<ModelPreset>) {
+        self.open_all_models_popup_for_provider(presets, None);
+    }
+
+    pub(crate) fn open_all_models_popup_for_provider(
+        &mut self,
+        presets: Vec<ModelPreset>,
+        provider_id: Option<&str>,
+    ) {
         if presets.is_empty() {
             self.add_info_message(
                 "No additional models are available right now.".to_string(),
@@ -8069,21 +8174,26 @@ impl ChatWidget {
             return;
         }
 
+        let provider_matches_current = provider_id.unwrap_or(self.config.model_provider_id.as_str())
+            == self.config.model_provider_id;
+        let target_provider_id = provider_id.map(ToOwned::to_owned);
         let mut items: Vec<SelectionItem> = Vec::new();
         for preset in presets.into_iter() {
             let description =
                 (!preset.description.is_empty()).then_some(preset.description.to_string());
-            let is_current = preset.model.as_str() == self.current_model();
+            let is_current = provider_matches_current && preset.model.as_str() == self.current_model();
             let single_supported_effort = preset.supported_reasoning_efforts.len() == 1;
             let preset_for_action = preset.clone();
+            let provider_id_for_action = target_provider_id.clone();
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
                 let preset_for_event = preset_for_action.clone();
                 tx.send(AppEvent::OpenReasoningPopup {
+                    provider_id: provider_id_for_action.clone(),
                     model: preset_for_event,
                 });
             })];
             items.push(SelectionItem {
-                name: preset.model.clone(),
+                name: Self::provider_model_name(provider_id, &preset.model),
                 description,
                 is_current,
                 is_default: preset.is_default,
@@ -8095,7 +8205,10 @@ impl ChatWidget {
 
         let header = self.model_menu_header(
             "Select Model and Effort",
-            "Access legacy models by running codex -m <model_name> or in your config.toml",
+            &format!(
+                "Browse {} models. Access legacy models by running codexpilot -m <model_name> or in config.toml",
+                Self::provider_title(provider_id)
+            ),
         );
         self.bottom_pane.show_selection_view(SelectionViewParams {
             footer_hint: Some("Press enter to select reasoning effort, or esc to dismiss.".into()),
@@ -8151,12 +8264,14 @@ impl ChatWidget {
     }
 
     fn model_selection_actions(
+        provider_id: Option<String>,
         model_for_action: String,
         effort_for_action: Option<ReasoningEffortConfig>,
         should_prompt_plan_mode_scope: bool,
+        apply_in_current_session: bool,
     ) -> Vec<SelectionAction> {
         vec![Box::new(move |tx| {
-            if should_prompt_plan_mode_scope {
+            if should_prompt_plan_mode_scope && apply_in_current_session {
                 tx.send(AppEvent::OpenPlanReasoningScopePrompt {
                     model: model_for_action.clone(),
                     effort: effort_for_action,
@@ -8164,9 +8279,12 @@ impl ChatWidget {
                 return;
             }
 
-            tx.send(AppEvent::UpdateModel(model_for_action.clone()));
-            tx.send(AppEvent::UpdateReasoningEffort(effort_for_action));
+            if apply_in_current_session {
+                tx.send(AppEvent::UpdateModel(model_for_action.clone()));
+                tx.send(AppEvent::UpdateReasoningEffort(effort_for_action));
+            }
             tx.send(AppEvent::PersistModelSelection {
+                provider_id: provider_id.clone(),
                 model: model_for_action.clone(),
                 effort: effort_for_action,
             });
@@ -8247,6 +8365,7 @@ impl ChatWidget {
             tx.send(AppEvent::UpdatePlanModeReasoningEffort(effort));
             tx.send(AppEvent::PersistPlanModeReasoningEffort(effort));
             tx.send(AppEvent::PersistModelSelection {
+                provider_id: None,
                 model: model.clone(),
                 effort,
             });
@@ -8279,8 +8398,30 @@ impl ChatWidget {
         });
     }
 
+    pub(crate) fn open_models_for_provider(&mut self, provider_id: &str) {
+        let presets: Vec<ModelPreset> = match self.model_catalog.try_list_models() {
+            Ok(models) => models,
+            Err(_) => {
+                self.add_info_message(
+                    "Models are being updated; please try /model again in a moment.".to_string(),
+                    /*hint*/ None,
+                );
+                return;
+            }
+        };
+        self.open_model_popup_with_presets_for_provider(presets, Some(provider_id));
+    }
+
     /// Open a popup to choose the reasoning effort (stage 2) for the given model.
     pub(crate) fn open_reasoning_popup(&mut self, preset: ModelPreset) {
+        self.open_reasoning_popup_for_provider(None, preset);
+    }
+
+    pub(crate) fn open_reasoning_popup_for_provider(
+        &mut self,
+        provider_id: Option<String>,
+        preset: ModelPreset,
+    ) {
         let default_effort: ReasoningEffortConfig = preset.default_reasoning_effort;
         let supported = preset.supported_reasoning_efforts;
         let in_plan_mode =
@@ -8351,7 +8492,11 @@ impl ChatWidget {
             .or(Some(default_effort));
 
         let model_slug = preset.model.to_string();
-        let is_current_model = self.current_model() == preset.model.as_str();
+        let apply_in_current_session = provider_id
+            .as_deref()
+            .unwrap_or(self.config.model_provider_id.as_str())
+            == self.config.model_provider_id;
+        let is_current_model = apply_in_current_session && self.current_model() == preset.model.as_str();
         let highlight_choice = if is_current_model {
             if in_plan_mode {
                 self.config
@@ -8405,16 +8550,20 @@ impl ChatWidget {
             let choice_effort = choice.stored;
             let should_prompt_plan_mode_scope =
                 self.should_prompt_plan_mode_reasoning_scope(model_slug.as_str(), choice_effort);
+            let provider_id_for_action = provider_id.clone();
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                if should_prompt_plan_mode_scope {
+                if should_prompt_plan_mode_scope && apply_in_current_session {
                     tx.send(AppEvent::OpenPlanReasoningScopePrompt {
                         model: model_for_action.clone(),
                         effort: choice_effort,
                     });
                 } else {
-                    tx.send(AppEvent::UpdateModel(model_for_action.clone()));
-                    tx.send(AppEvent::UpdateReasoningEffort(choice_effort));
+                    if apply_in_current_session {
+                        tx.send(AppEvent::UpdateModel(model_for_action.clone()));
+                        tx.send(AppEvent::UpdateReasoningEffort(choice_effort));
+                    }
                     tx.send(AppEvent::PersistModelSelection {
+                        provider_id: provider_id_for_action.clone(),
                         model: model_for_action.clone(),
                         effort: choice_effort,
                     });
@@ -8434,7 +8583,11 @@ impl ChatWidget {
 
         let mut header = ColumnRenderable::new();
         header.push(Line::from(
-            format!("Select Reasoning Level for {model_slug}").bold(),
+            format!(
+                "Select Reasoning Level for {}",
+                Self::provider_model_name(provider_id.as_deref(), &model_slug)
+            )
+            .bold(),
         ));
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
@@ -8469,8 +8622,11 @@ impl ChatWidget {
 
     fn apply_model_and_effort(&self, model: String, effort: Option<ReasoningEffortConfig>) {
         self.apply_model_and_effort_without_persist(model.clone(), effort);
-        self.app_event_tx
-            .send(AppEvent::PersistModelSelection { model, effort });
+        self.app_event_tx.send(AppEvent::PersistModelSelection {
+            provider_id: None,
+            model,
+            effort,
+        });
     }
 
     /// Open the permissions popup (alias for /permissions).

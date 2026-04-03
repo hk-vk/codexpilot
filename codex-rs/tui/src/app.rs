@@ -908,6 +908,7 @@ async fn handle_model_migration_prompt_if_needed(
                 app_event_tx.send(AppEvent::UpdateModel(target_model.clone()));
                 app_event_tx.send(AppEvent::UpdateReasoningEffort(mapped_effort));
                 app_event_tx.send(AppEvent::PersistModelSelection {
+                    provider_id: None,
                     model: target_model.clone(),
                     effort: mapped_effort,
                 });
@@ -4234,6 +4235,57 @@ impl App {
                     tui.frame_requester().schedule_frame();
                 }
             }
+            AppEvent::LogoutCodexAuth => {
+                match codex_login::logout(
+                    &self.chat_widget.config_ref().codex_home,
+                    self.chat_widget
+                        .config_ref()
+                        .cli_auth_credentials_store_mode,
+                ) {
+                    Ok(true) => self
+                        .chat_widget
+                        .add_to_history(history_cell::new_info_event(
+                            "Logged out Codex.".to_string(),
+                            /*hint*/ None,
+                        )),
+                    Ok(false) => self
+                        .chat_widget
+                        .add_to_history(history_cell::new_info_event(
+                            "Codex was not logged in.".to_string(),
+                            /*hint*/ None,
+                        )),
+                    Err(err) => self
+                        .chat_widget
+                        .add_to_history(history_cell::new_error_event(format!(
+                            "Failed to log out Codex: {err}"
+                        ))),
+                }
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::LogoutGitHubCopilotAuth => {
+                match codex_login::github_copilot_storage::delete_github_copilot_auth(
+                    &self.chat_widget.config_ref().codex_home,
+                ) {
+                    Ok(true) => self
+                        .chat_widget
+                        .add_to_history(history_cell::new_info_event(
+                            "Logged out GitHub Copilot.".to_string(),
+                            /*hint*/ None,
+                        )),
+                    Ok(false) => self
+                        .chat_widget
+                        .add_to_history(history_cell::new_info_event(
+                            "GitHub Copilot was not logged in.".to_string(),
+                            /*hint*/ None,
+                        )),
+                    Err(err) => self
+                        .chat_widget
+                        .add_to_history(history_cell::new_error_event(format!(
+                            "Failed to log out GitHub Copilot: {err}"
+                        ))),
+                }
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::StartCommitAnimation => {
                 if self
                     .commit_anim_running
@@ -4462,15 +4514,23 @@ impl App {
             AppEvent::OpenRealtimeAudioDeviceSelection { kind } => {
                 self.chat_widget.open_realtime_audio_device_selection(kind);
             }
-            AppEvent::OpenReasoningPopup { model } => {
-                self.chat_widget.open_reasoning_popup(model);
+            AppEvent::OpenReasoningPopup { provider_id, model } => {
+                self.chat_widget
+                    .open_reasoning_popup_for_provider(provider_id, model);
             }
             AppEvent::OpenPlanReasoningScopePrompt { model, effort } => {
                 self.chat_widget
                     .open_plan_reasoning_scope_prompt(model, effort);
             }
-            AppEvent::OpenAllModelsPopup { models } => {
-                self.chat_widget.open_all_models_popup(models);
+            AppEvent::OpenAllModelsPopup {
+                provider_id,
+                models,
+            } => {
+                self.chat_widget
+                    .open_all_models_popup_for_provider(models, provider_id.as_deref());
+            }
+            AppEvent::OpenModelProviderPicker { provider_id } => {
+                self.chat_widget.open_models_for_provider(&provider_id);
             }
             AppEvent::OpenFullAccessConfirmation {
                 preset,
@@ -4840,23 +4900,39 @@ impl App {
                     let _ = (preset, mode);
                 }
             }
-            AppEvent::PersistModelSelection { model, effort } => {
+            AppEvent::PersistModelSelection {
+                provider_id,
+                model,
+                effort,
+            } => {
                 let profile = self.active_profile.as_deref();
-                match ConfigEditsBuilder::new(&self.config.codex_home)
-                    .with_profile(profile)
-                    .set_model(Some(model.as_str()), effort)
-                    .apply()
-                    .await
-                {
+                let target_provider = provider_id
+                    .clone()
+                    .unwrap_or_else(|| self.config.model_provider_id.clone());
+                let mut builder = ConfigEditsBuilder::new(&self.config.codex_home).with_profile(profile);
+                if provider_id.is_some() {
+                    builder = builder.set_model_provider(Some(target_provider.as_str()));
+                }
+                match builder.set_model(Some(model.as_str()), effort).apply().await {
                     Ok(()) => {
                         let effort_label = effort
                             .map(|selected_effort| selected_effort.to_string())
                             .unwrap_or_else(|| "default".to_string());
-                        tracing::info!("Selected model: {model}, Selected effort: {effort_label}");
-                        let mut message = format!("Model changed to {model}");
+                        tracing::info!(
+                            "Selected provider: {target_provider}, model: {model}, effort: {effort_label}"
+                        );
+                        let provider_changed = target_provider != self.config.model_provider_id;
+                        let mut message = if provider_changed {
+                            format!("Saved {target_provider} / {model}")
+                        } else {
+                            format!("Model changed to {model}")
+                        };
                         if let Some(label) = Self::reasoning_label_for(&model, effort) {
                             message.push(' ');
                             message.push_str(label);
+                        }
+                        if provider_changed {
+                            message.push_str(". Restart Codexpilot to load that provider's model catalog.");
                         }
                         if let Some(profile) = profile {
                             message.push_str(" for ");
@@ -4872,11 +4948,12 @@ impl App {
                         );
                         if let Some(profile) = profile {
                             self.chat_widget.add_error_message(format!(
-                                "Failed to save model for profile `{profile}`: {err}"
+                                "Failed to save model/provider for profile `{profile}`: {err}"
                             ));
                         } else {
-                            self.chat_widget
-                                .add_error_message(format!("Failed to save default model: {err}"));
+                            self.chat_widget.add_error_message(format!(
+                                "Failed to save default model/provider: {err}"
+                            ));
                         }
                     }
                 }

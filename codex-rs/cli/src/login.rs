@@ -9,6 +9,7 @@
 
 use codex_app_server_protocol::AuthMode;
 use codex_core::config::Config;
+use codex_core::config::edit::ConfigEditsBuilder;
 use codex_login::AuthCredentialsStoreMode;
 use codex_login::CLIENT_ID;
 use codex_login::CodexAuth;
@@ -33,6 +34,8 @@ use codex_utils_cli::CliConfigOverrides;
 use std::fs::OpenOptions;
 use std::io::IsTerminal;
 use std::io::Read;
+use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 use tracing_appender::non_blocking;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -324,9 +327,70 @@ pub async fn run_login_with_device_code_fallback_to_browser(
     }
 }
 
+fn current_codex_command_path() -> String {
+    std::env::current_exe()
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "codex".to_string())
+}
+
+fn github_copilot_provider_config_block(base_url: &str, command_path: &str) -> String {
+    format!(
+        "[model_providers.github-copilot]\nname = \"GitHub Copilot\"\nbase_url = \"{base_url}\"\nwire_api = \"responses\"\n\n[model_providers.github-copilot.auth]\ncommand = \"{command_path}\"\nargs = [\"login\", \"github-copilot-token\"]\nrefresh_interval_ms = 240000\n"
+    )
+}
+
+fn ensure_github_copilot_provider_config(
+    codex_home: &Path,
+    base_url: &str,
+) -> std::io::Result<bool> {
+    let config_file = codex_home.join("config.toml");
+    let existing = match std::fs::read_to_string(&config_file) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err),
+    };
+
+    if existing.contains("[model_providers.github-copilot]") {
+        return Ok(false);
+    }
+
+    if let Some(parent) = config_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config_file)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        file.write_all(b"\n")?;
+    }
+    if !existing.is_empty() {
+        file.write_all(b"\n")?;
+    }
+    let command_path = current_codex_command_path();
+    file.write_all(github_copilot_provider_config_block(base_url, &command_path).as_bytes())?;
+    file.flush()?;
+    Ok(true)
+}
+
+async fn ensure_github_copilot_provider_ready(
+    codex_home: &Path,
+    base_url: &str,
+) -> std::io::Result<()> {
+    let _ = ensure_github_copilot_provider_config(codex_home, base_url)?;
+    ConfigEditsBuilder::new(codex_home)
+        .set_model_provider(Some("github-copilot"))
+        .apply()
+        .await
+        .map_err(std::io::Error::other)
+}
+
 pub async fn run_login_with_github_copilot(
     cli_config_overrides: CliConfigOverrides,
     enterprise_url: Option<String>,
+    write_config: bool,
 ) -> ! {
     let config = load_config_or_exit(cli_config_overrides).await;
     let _login_log_guard = init_login_file_logging(&config);
@@ -351,13 +415,14 @@ pub async fn run_login_with_github_copilot(
         }
     };
 
-    let device_code = match request_github_device_code(&client, enterprise_domain.as_deref(), None).await {
-        Ok(device_code) => device_code,
-        Err(err) => {
-            eprintln!("Error starting GitHub Copilot device login: {err}");
-            std::process::exit(1);
-        }
-    };
+    let device_code =
+        match request_github_device_code(&client, enterprise_domain.as_deref(), None).await {
+            Ok(device_code) => device_code,
+            Err(err) => {
+                eprintln!("Error starting GitHub Copilot device login: {err}");
+                std::process::exit(1);
+            }
+        };
 
     eprintln!(
         "Open this URL and enter the code:\n\n{}\n\nCode: {}\n",
@@ -404,6 +469,13 @@ pub async fn run_login_with_github_copilot(
 
     match save_github_copilot_auth(&config.codex_home, &auth) {
         Ok(()) => {
+            if let Err(err) = ensure_github_copilot_provider_ready(&config.codex_home, &auth.api_base_url).await {
+                eprintln!("Error preparing GitHub Copilot provider config: {err}");
+                std::process::exit(1);
+            }
+            if write_config {
+                eprintln!("Ensured GitHub Copilot provider config in ~/.codex/config.toml");
+            }
             eprintln!("Successfully logged in with GitHub Copilot");
             std::process::exit(0);
         }
@@ -427,6 +499,8 @@ pub async fn run_print_github_copilot_provider_config(
         }
     };
 
+    let command_path = current_codex_command_path();
+
     println!("[model_providers.github-copilot]");
     println!("name = \"GitHub Copilot\"");
     println!("base_url = \"{base_url}\"");
@@ -434,7 +508,7 @@ pub async fn run_print_github_copilot_provider_config(
     println!("http_headers = {{ Openai-Intent = \"conversation-edits\" }}");
     println!();
     println!("[model_providers.github-copilot.auth]");
-    println!("command = \"codex\"");
+    println!("command = \"{command_path}\"");
     println!("args = [\"login\", \"github-copilot-token\"]");
     println!("refresh_interval_ms = 240000");
     println!();
@@ -534,13 +608,14 @@ pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
 pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {
     let config = load_config_or_exit(cli_config_overrides).await;
 
-    let removed_codex_auth = match logout(&config.codex_home, config.cli_auth_credentials_store_mode) {
-        Ok(removed) => removed,
-        Err(e) => {
-            eprintln!("Error logging out: {e}");
-            std::process::exit(1);
-        }
-    };
+    let removed_codex_auth =
+        match logout(&config.codex_home, config.cli_auth_credentials_store_mode) {
+            Ok(removed) => removed,
+            Err(e) => {
+                eprintln!("Error logging out: {e}");
+                std::process::exit(1);
+            }
+        };
 
     let removed_copilot_auth = match delete_github_copilot_auth(&config.codex_home) {
         Ok(removed) => removed,
@@ -588,7 +663,11 @@ fn safe_format_key(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::ensure_github_copilot_provider_config;
+    use super::github_copilot_provider_config_block;
     use super::safe_format_key;
+    use pretty_assertions::assert_eq;
+    use tempfile::tempdir;
 
     #[test]
     fn formats_long_key() {
@@ -600,5 +679,36 @@ mod tests {
     fn short_key_returns_stars() {
         let key = "sk-proj-12345";
         assert_eq!(safe_format_key(key), "***");
+    }
+
+    #[test]
+    fn github_copilot_provider_config_block_contains_expected_settings() {
+        let block =
+            github_copilot_provider_config_block("https://api.githubcopilot.com", "/usr/bin/codex");
+        assert!(block.contains("[model_providers.github-copilot]"));
+        assert!(block.contains("command = \"/usr/bin/codex\""));
+        assert!(block.contains("args = [\"login\", \"github-copilot-token\"]"));
+    }
+
+    #[test]
+    fn ensure_github_copilot_provider_config_appends_only_once() {
+        let dir = tempdir().expect("tempdir should exist");
+
+        let wrote =
+            ensure_github_copilot_provider_config(dir.path(), "https://api.githubcopilot.com")
+                .expect("config write should succeed");
+        assert!(wrote);
+
+        let wrote_again =
+            ensure_github_copilot_provider_config(dir.path(), "https://api.githubcopilot.com")
+                .expect("second config write should succeed");
+        assert!(!wrote_again);
+
+        let config = std::fs::read_to_string(dir.path().join("config.toml"))
+            .expect("config should be readable");
+        assert_eq!(
+            config.matches("[model_providers.github-copilot]").count(),
+            1
+        );
     }
 }

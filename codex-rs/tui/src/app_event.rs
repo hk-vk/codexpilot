@@ -291,8 +291,9 @@ pub(crate) enum AppEvent {
     /// Update the current personality in the running app and widget.
     UpdatePersonality(Personality),
 
-    /// Persist the selected model and reasoning effort to the appropriate config.
+    /// Persist the selected model provider, model, and reasoning effort to the appropriate config.
     PersistModelSelection {
+        provider_id: Option<String>,
         model: String,
         effort: Option<ReasoningEffort>,
     },
@@ -301,6 +302,12 @@ pub(crate) enum AppEvent {
     PersistPersonalitySelection {
         personality: Personality,
     },
+
+    /// Remove locally stored Codex credentials.
+    LogoutCodexAuth,
+
+    /// Remove locally stored GitHub Copilot credentials.
+    LogoutGitHubCopilotAuth,
 
     /// Persist the selected service tier to the appropriate config.
     PersistServiceTierSelection {
@@ -326,6 +333,7 @@ pub(crate) enum AppEvent {
 
     /// Open the reasoning selection popup after picking a model.
     OpenReasoningPopup {
+        provider_id: Option<String>,
         model: ModelPreset,
     },
 
@@ -337,7 +345,13 @@ pub(crate) enum AppEvent {
 
     /// Open the full model picker (non-auto models).
     OpenAllModelsPopup {
+        provider_id: Option<String>,
         models: Vec<ModelPreset>,
+    },
+
+    /// Open the model picker for a specific provider.
+    OpenModelProviderPicker {
+        provider_id: String,
     },
 
     /// Open the confirmation prompt before enabling full access mode.

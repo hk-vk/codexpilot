@@ -319,6 +319,10 @@ struct GitHubCopilotLoginCommand {
     /// GitHub Enterprise URL or host. Omit to use github.com.
     #[arg(long = "enterprise-url", value_name = "URL_OR_HOST")]
     enterprise_url: Option<String>,
+
+    /// Append a GitHub Copilot provider block to config.toml when missing.
+    #[arg(long = "write-config")]
+    write_config: bool,
 }
 
 #[derive(Debug, Args)]
@@ -623,7 +627,7 @@ fn stage_str(stage: Stage) -> &'static str {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+pub fn main() -> anyhow::Result<()> {
     arg0_dispatch_or_else(|arg0_paths: Arg0DispatchPaths| async move {
         cli_main(arg0_paths).await?;
         Ok(())
@@ -834,6 +838,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     run_login_with_github_copilot(
                         login_cli.config_overrides,
                         github_copilot.enterprise_url,
+                        github_copilot.write_config,
                     )
                     .await;
                 }

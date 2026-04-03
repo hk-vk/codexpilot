@@ -51,8 +51,9 @@ pub fn load_github_copilot_auth(codex_home: &Path) -> io::Result<Option<GitHubCo
 
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
-    let auth = serde_json::from_str(&contents)
-        .map_err(|err| io::Error::other(format!("failed to parse {}: {err}", auth_file.display())))?;
+    let auth = serde_json::from_str(&contents).map_err(|err| {
+        io::Error::other(format!("failed to parse {}: {err}", auth_file.display()))
+    })?;
     Ok(Some(auth))
 }
 
@@ -62,8 +63,9 @@ pub fn save_github_copilot_auth(codex_home: &Path, auth: &GitHubCopilotAuth) -> 
         std::fs::create_dir_all(parent)?;
     }
 
-    let json = serde_json::to_string_pretty(auth)
-        .map_err(|err| io::Error::other(format!("failed to serialize GitHub Copilot auth: {err}")))?;
+    let json = serde_json::to_string_pretty(auth).map_err(|err| {
+        io::Error::other(format!("failed to serialize GitHub Copilot auth: {err}"))
+    })?;
     let mut options = OpenOptions::new();
     options.create(true).truncate(true).write(true);
 

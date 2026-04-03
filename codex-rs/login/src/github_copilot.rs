@@ -229,7 +229,10 @@ pub async fn poll_github_device_access_token(
         match error.error.as_str() {
             "authorization_pending" => continue,
             "slow_down" => {
-                interval = error.interval.unwrap_or(interval.saturating_add(5)).max(interval + 1);
+                interval = error
+                    .interval
+                    .unwrap_or(interval.saturating_add(5))
+                    .max(interval + 1);
             }
             _ => {
                 let suffix = error
@@ -290,7 +293,9 @@ async fn decode_json_response<T: for<'de> Deserialize<'de>>(
     let status = response.status();
     let body = response.text().await.map_err(io::Error::other)?;
     if !status.is_success() {
-        return Err(io::Error::other(format!("{context} with status {status}: {body}")));
+        return Err(io::Error::other(format!(
+            "{context} with status {status}: {body}"
+        )));
     }
 
     serde_json::from_str(&body).map_err(|err| {
@@ -307,7 +312,10 @@ mod tests {
 
     #[test]
     fn normalize_github_domain_accepts_host_and_url() {
-        assert_eq!(normalize_github_domain("github.com"), Some("github.com".to_string()));
+        assert_eq!(
+            normalize_github_domain("github.com"),
+            Some("github.com".to_string())
+        );
         assert_eq!(
             normalize_github_domain("https://octo.example.com/path"),
             Some("octo.example.com".to_string())
