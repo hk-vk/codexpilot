@@ -176,6 +176,7 @@ use crate::codex_thread::ThreadConfigSnapshot;
 use crate::compact::collect_user_messages;
 use crate::config::Config;
 use crate::config::Constrained;
+use crate::config::ConstraintError;
 use crate::config::ConstraintResult;
 use crate::config::GhostSnapshotConfig;
 use crate::config::StartedNetworkProxy;
@@ -184,6 +185,7 @@ use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::environment_context::EnvironmentContext;
 use codex_config::CONFIG_TOML_FILE;
+use codex_config::RequirementSource;
 use codex_config::types::McpServerConfig;
 use codex_config::types::ShellEnvironmentPolicy;
 use codex_model_provider_info::ModelProviderInfo;
@@ -1182,6 +1184,31 @@ impl SessionConfiguration {
         if let Some(windows_sandbox_level) = updates.windows_sandbox_level {
             next_configuration.windows_sandbox_level = windows_sandbox_level;
         }
+        if let Some(model_provider_id) = updates.model_provider_id.as_deref() {
+            let provider = next_configuration
+                .original_config_do_not_use
+                .model_providers
+                .get(model_provider_id)
+                .cloned()
+                .ok_or_else(|| ConstraintError::InvalidValue {
+                    field_name: "model_provider",
+                    candidate: model_provider_id.to_string(),
+                    allowed: format!(
+                        "{:?}",
+                        next_configuration
+                            .original_config_do_not_use
+                            .model_providers
+                            .keys()
+                            .collect::<Vec<_>>()
+                    ),
+                    requirement_source: RequirementSource::Unknown,
+                })?;
+            let mut config = (*next_configuration.original_config_do_not_use).clone();
+            config.model_provider_id = model_provider_id.to_string();
+            config.model_provider = provider.clone();
+            next_configuration.provider = provider;
+            next_configuration.original_config_do_not_use = Arc::new(config);
+        }
 
         let absolute_cwd = updates
             .cwd
@@ -1222,6 +1249,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) approvals_reviewer: Option<ApprovalsReviewer>,
     pub(crate) sandbox_policy: Option<SandboxPolicy>,
     pub(crate) windows_sandbox_level: Option<WindowsSandboxLevel>,
+    pub(crate) model_provider_id: Option<String>,
     pub(crate) collaboration_mode: Option<CollaborationMode>,
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
     pub(crate) service_tier: Option<Option<ServiceTier>>,
@@ -4466,6 +4494,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                     approvals_reviewer,
                     sandbox_policy,
                     windows_sandbox_level,
+                    model_provider,
                     model,
                     effort,
                     summary,
@@ -4492,6 +4521,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                             approvals_reviewer,
                             sandbox_policy,
                             windows_sandbox_level,
+                            model_provider_id: model_provider,
                             collaboration_mode: Some(collaboration_mode),
                             reasoning_summary: summary,
                             service_tier,
@@ -4779,6 +4809,7 @@ mod handlers {
                         approvals_reviewer,
                         sandbox_policy: Some(sandbox_policy),
                         windows_sandbox_level: None,
+                        model_provider_id: None,
                         collaboration_mode,
                         reasoning_summary: summary,
                         service_tier,

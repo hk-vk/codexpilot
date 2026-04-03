@@ -25,6 +25,7 @@ use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::resolve_oss_provider;
@@ -34,7 +35,6 @@ use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::format_config_error_with_source;
 use codex_core::format_exec_policy_error_with_source;
 use codex_core::path_utils;
-use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::read_session_meta_line;
 use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_login::AuthConfig;
@@ -945,7 +945,7 @@ async fn run_ratatui_app(
             &initial_config,
             initial_config.active_profile.as_deref(),
         )
-            .await?
+        .await?
     {
         initial_config = load_config_or_exit(
             cli_kv_overrides.clone(),
@@ -1611,7 +1611,10 @@ fn github_copilot_provider_config_block(base_url: &str, command_path: &str) -> S
     )
 }
 
-fn ensure_github_copilot_provider_config(codex_home: &std::path::Path, base_url: &str) -> std::io::Result<bool> {
+fn ensure_github_copilot_provider_config(
+    codex_home: &std::path::Path,
+    base_url: &str,
+) -> std::io::Result<bool> {
     let config_file = codex_home.join("config.toml");
     let existing = match std::fs::read_to_string(&config_file) {
         Ok(contents) => contents,
@@ -1627,7 +1630,10 @@ fn ensure_github_copilot_provider_config(codex_home: &std::path::Path, base_url:
         std::fs::create_dir_all(parent)?;
     }
 
-    let mut file = OpenOptions::new().create(true).append(true).open(&config_file)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config_file)?;
     if !existing.is_empty() && !existing.ends_with('\n') {
         file.write_all(b"\n")?;
     }
@@ -1648,7 +1654,8 @@ async fn reconcile_github_copilot_provider_on_startup(
         return Ok(false);
     };
 
-    let wrote_provider = ensure_github_copilot_provider_config(&config.codex_home, &auth.api_base_url)?;
+    let wrote_provider =
+        ensure_github_copilot_provider_config(&config.codex_home, &auth.api_base_url)?;
     let switched_provider = if config.model_provider_id != "github-copilot" {
         ConfigEditsBuilder::new(&config.codex_home)
             .with_profile(active_profile)

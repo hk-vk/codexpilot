@@ -1973,7 +1973,8 @@ impl ChatWidget {
         self.pending_turn_copyable_output = None;
         let forked_from_id = event.forked_from_id;
         let model_for_header = event.model.clone();
-        self.session_header.set_model(&model_for_header);
+        let decorated_model_for_header = self.decorate_model_label(&model_for_header);
+        self.session_header.set_model(&decorated_model_for_header);
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             Some(model_for_header.clone()),
             Some(event.reasoning_effort),
@@ -4597,6 +4598,11 @@ impl ChatWidget {
         };
 
         let active_cell = Some(Self::placeholder_session_header_cell(&config));
+        let header_model_label = if config.model_provider_id == "github-copilot" {
+            format!("{header_model} (copilot)")
+        } else {
+            header_model.clone()
+        };
 
         let current_cwd = Some(config.cwd.to_path_buf());
         let queued_message_edit_binding = queued_message_edit_binding_for_terminal(terminal_info());
@@ -4624,7 +4630,7 @@ impl ChatWidget {
             has_chatgpt_account,
             model_catalog,
             session_telemetry,
-            session_header: SessionHeader::new(header_model),
+            session_header: SessionHeader::new(header_model_label),
             initial_user_message,
             status_account_display,
             token_info: None,
@@ -7303,7 +7309,7 @@ impl ChatWidget {
             rate_limit_snapshots.as_slice(),
             self.plan_type,
             Local::now(),
-            self.model_display_name(),
+            &self.model_display_name(),
             collaboration_mode,
             reasoning_effort_override,
             refreshing_rate_limits,
@@ -7601,6 +7607,7 @@ impl ChatWidget {
                     /*approvals_reviewer*/ None,
                     /*sandbox_policy*/ None,
                     /*windows_sandbox_level*/ None,
+                    /*model_provider*/ None,
                     Some(switch_model_for_events.clone()),
                     Some(Some(default_effort)),
                     /*summary*/ None,
@@ -7677,15 +7684,18 @@ impl ChatWidget {
         }
 
         let has_copilot_provider = self.config.model_providers.contains_key("github-copilot")
-            || codex_login::github_copilot_storage::load_github_copilot_auth(&self.config.codex_home)
-                .map(|auth| auth.is_some())
-                .unwrap_or(false);
+            || codex_login::github_copilot_storage::load_github_copilot_auth(
+                &self.config.codex_home,
+            )
+            .map(|auth| auth.is_some())
+            .unwrap_or(false);
         if !has_copilot_provider {
             let presets: Vec<ModelPreset> = match self.model_catalog.try_list_models() {
                 Ok(models) => models,
                 Err(_) => {
                     self.add_info_message(
-                        "Models are being updated; please try /model again in a moment.".to_string(),
+                        "Models are being updated; please try /model again in a moment."
+                            .to_string(),
                         /*hint*/ None,
                     );
                     return;
@@ -7711,7 +7721,9 @@ impl ChatWidget {
             },
             SelectionItem {
                 name: "GitHub Copilot".to_string(),
-                description: Some("Show models saved under the GitHub Copilot provider.".to_string()),
+                description: Some(
+                    "Show models saved under the GitHub Copilot provider.".to_string(),
+                ),
                 is_current: current_provider == "github-copilot",
                 actions: vec![Box::new(|tx| {
                     tx.send(AppEvent::OpenModelProviderPicker {
@@ -7799,6 +7811,7 @@ impl ChatWidget {
                             /*approvals_reviewer*/ None,
                             /*sandbox_policy*/ None,
                             /*windows_sandbox_level*/ None,
+                            /*model_provider*/ None,
                             /*model*/ None,
                             /*effort*/ None,
                             /*summary*/ None,
@@ -8033,13 +8046,6 @@ impl ChatWidget {
         self.open_model_popup_with_presets_for_provider(presets, None);
     }
 
-    fn provider_model_name(provider_id: Option<&str>, model: &str) -> String {
-        match provider_id {
-            Some("github-copilot") => format!("{model} (copilot)"),
-            _ => model.to_string(),
-        }
-    }
-
     fn provider_title(provider_id: Option<&str>) -> &'static str {
         match provider_id {
             Some("github-copilot") => "GitHub Copilot",
@@ -8058,13 +8064,14 @@ impl ChatWidget {
             .collect();
 
         let current_model = self.current_model();
-        let provider_matches_current = provider_id.unwrap_or(self.config.model_provider_id.as_str())
+        let provider_matches_current = provider_id
+            .unwrap_or(self.config.model_provider_id.as_str())
             == self.config.model_provider_id;
         let current_label = presets
             .iter()
             .find(|preset| preset.model.as_str() == current_model)
-            .map(|preset| Self::provider_model_name(provider_id, &preset.model))
-            .unwrap_or_else(|| self.model_display_name().to_string());
+            .map(|preset| preset.model.to_string())
+            .unwrap_or_else(|| self.model_display_name());
 
         let (mut auto_presets, other_presets): (Vec<ModelPreset>, Vec<ModelPreset>) = presets
             .into_iter()
@@ -8095,7 +8102,7 @@ impl ChatWidget {
                     provider_matches_current,
                 );
                 SelectionItem {
-                    name: Self::provider_model_name(provider_id, &model),
+                    name: model.clone(),
                     description,
                     is_current: provider_matches_current && model.as_str() == current_model,
                     is_default: preset.is_default,
@@ -8123,7 +8130,10 @@ impl ChatWidget {
             ));
 
             items.push(SelectionItem {
-                name: format!("All models ({})", Self::provider_title(provider_id_for_name.as_deref())),
+                name: format!(
+                    "All models ({})",
+                    Self::provider_title(provider_id_for_name.as_deref())
+                ),
                 description,
                 is_current,
                 actions,
@@ -8174,14 +8184,16 @@ impl ChatWidget {
             return;
         }
 
-        let provider_matches_current = provider_id.unwrap_or(self.config.model_provider_id.as_str())
+        let provider_matches_current = provider_id
+            .unwrap_or(self.config.model_provider_id.as_str())
             == self.config.model_provider_id;
         let target_provider_id = provider_id.map(ToOwned::to_owned);
         let mut items: Vec<SelectionItem> = Vec::new();
         for preset in presets.into_iter() {
             let description =
                 (!preset.description.is_empty()).then_some(preset.description.to_string());
-            let is_current = provider_matches_current && preset.model.as_str() == self.current_model();
+            let is_current =
+                provider_matches_current && preset.model.as_str() == self.current_model();
             let single_supported_effort = preset.supported_reasoning_efforts.len() == 1;
             let preset_for_action = preset.clone();
             let provider_id_for_action = target_provider_id.clone();
@@ -8193,7 +8205,7 @@ impl ChatWidget {
                 });
             })];
             items.push(SelectionItem {
-                name: Self::provider_model_name(provider_id, &preset.model),
+                name: preset.model.clone(),
                 description,
                 is_current,
                 is_default: preset.is_default,
@@ -8279,10 +8291,28 @@ impl ChatWidget {
                 return;
             }
 
-            if apply_in_current_session {
-                tx.send(AppEvent::UpdateModel(model_for_action.clone()));
-                tx.send(AppEvent::UpdateReasoningEffort(effort_for_action));
+            if let Some(provider_id) = provider_id.clone() {
+                tx.send(AppEvent::UpdateModelProvider(provider_id));
             }
+            tx.send(AppEvent::CodexOp(
+                AppCommand::override_turn_context(
+                    /*cwd*/ None,
+                    /*approval_policy*/ None,
+                    /*approvals_reviewer*/ None,
+                    /*sandbox_policy*/ None,
+                    /*windows_sandbox_level*/ None,
+                    provider_id.clone(),
+                    Some(model_for_action.clone()),
+                    Some(effort_for_action),
+                    /*summary*/ None,
+                    /*service_tier*/ None,
+                    /*collaboration_mode*/ None,
+                    /*personality*/ None,
+                )
+                .into_core(),
+            ));
+            tx.send(AppEvent::UpdateModel(model_for_action.clone()));
+            tx.send(AppEvent::UpdateReasoningEffort(effort_for_action));
             tx.send(AppEvent::PersistModelSelection {
                 provider_id: provider_id.clone(),
                 model: model_for_action.clone(),
@@ -8496,7 +8526,8 @@ impl ChatWidget {
             .as_deref()
             .unwrap_or(self.config.model_provider_id.as_str())
             == self.config.model_provider_id;
-        let is_current_model = apply_in_current_session && self.current_model() == preset.model.as_str();
+        let is_current_model =
+            apply_in_current_session && self.current_model() == preset.model.as_str();
         let highlight_choice = if is_current_model {
             if in_plan_mode {
                 self.config
@@ -8558,10 +8589,28 @@ impl ChatWidget {
                         effort: choice_effort,
                     });
                 } else {
-                    if apply_in_current_session {
-                        tx.send(AppEvent::UpdateModel(model_for_action.clone()));
-                        tx.send(AppEvent::UpdateReasoningEffort(choice_effort));
+                    if let Some(provider_id) = provider_id_for_action.clone() {
+                        tx.send(AppEvent::UpdateModelProvider(provider_id));
                     }
+                    tx.send(AppEvent::CodexOp(
+                        AppCommand::override_turn_context(
+                            /*cwd*/ None,
+                            /*approval_policy*/ None,
+                            /*approvals_reviewer*/ None,
+                            /*sandbox_policy*/ None,
+                            /*windows_sandbox_level*/ None,
+                            provider_id_for_action.clone(),
+                            Some(model_for_action.clone()),
+                            Some(choice_effort),
+                            /*summary*/ None,
+                            /*service_tier*/ None,
+                            /*collaboration_mode*/ None,
+                            /*personality*/ None,
+                        )
+                        .into_core(),
+                    ));
+                    tx.send(AppEvent::UpdateModel(model_for_action.clone()));
+                    tx.send(AppEvent::UpdateReasoningEffort(choice_effort));
                     tx.send(AppEvent::PersistModelSelection {
                         provider_id: provider_id_for_action.clone(),
                         model: model_for_action.clone(),
@@ -8583,11 +8632,7 @@ impl ChatWidget {
 
         let mut header = ColumnRenderable::new();
         header.push(Line::from(
-            format!(
-                "Select Reasoning Level for {}",
-                Self::provider_model_name(provider_id.as_deref(), &model_slug)
-            )
-            .bold(),
+            format!("Select Reasoning Level for {model_slug}").bold(),
         ));
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
@@ -8873,6 +8918,7 @@ impl ChatWidget {
                     Some(approvals_reviewer),
                     Some(sandbox_clone.clone()),
                     /*windows_sandbox_level*/ None,
+                    /*model_provider*/ None,
                     /*model*/ None,
                     /*effort*/ None,
                     /*summary*/ None,
@@ -9659,6 +9705,14 @@ impl ChatWidget {
     }
 
     /// Set the model in the widget's config copy and stored collaboration mode.
+    pub(crate) fn set_model_provider(&mut self, model_provider_id: &str) {
+        self.config.model_provider_id = model_provider_id.to_string();
+        if let Some(provider) = self.config.model_providers.get(model_provider_id).cloned() {
+            self.config.model_provider = provider;
+        }
+        self.refresh_model_dependent_surfaces();
+    }
+
     pub(crate) fn set_model(&mut self, model: &str) {
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             Some(model.to_string()),
@@ -9682,6 +9736,7 @@ impl ChatWidget {
                 /*approvals_reviewer*/ None,
                 /*sandbox_policy*/ None,
                 /*windows_sandbox_level*/ None,
+                /*model_provider*/ None,
                 /*model*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
@@ -9844,7 +9899,8 @@ impl ChatWidget {
 
     fn refresh_model_display(&mut self) {
         let effective = self.effective_collaboration_mode();
-        self.session_header.set_model(effective.model());
+        let model_label = self.decorate_model_label(effective.model());
+        self.session_header.set_model(&model_label);
         // Keep composer paste affordances aligned with the currently effective model.
         self.sync_image_paste_enabled();
         self.refresh_terminal_title();
@@ -9863,13 +9919,19 @@ impl ChatWidget {
         self.refresh_status_line();
     }
 
-    fn model_display_name(&self) -> &str {
-        let model = self.current_model();
+    fn decorate_model_label(&self, model: &str) -> String {
         if model.is_empty() {
-            DEFAULT_MODEL_DISPLAY_NAME
-        } else {
-            model
+            return DEFAULT_MODEL_DISPLAY_NAME.to_string();
         }
+        if self.config.model_provider_id == "github-copilot" {
+            format!("{model} (copilot)")
+        } else {
+            model.to_string()
+        }
+    }
+
+    fn model_display_name(&self) -> String {
+        self.decorate_model_label(self.current_model())
     }
 
     /// Get the label for the current collaboration mode.

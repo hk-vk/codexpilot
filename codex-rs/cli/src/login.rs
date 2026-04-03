@@ -469,7 +469,9 @@ pub async fn run_login_with_github_copilot(
 
     match save_github_copilot_auth(&config.codex_home, &auth) {
         Ok(()) => {
-            if let Err(err) = ensure_github_copilot_provider_ready(&config.codex_home, &auth.api_base_url).await {
+            if let Err(err) =
+                ensure_github_copilot_provider_ready(&config.codex_home, &auth.api_base_url).await
+            {
                 eprintln!("Error preparing GitHub Copilot provider config: {err}");
                 std::process::exit(1);
             }

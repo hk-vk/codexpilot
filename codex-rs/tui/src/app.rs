@@ -1408,6 +1408,7 @@ impl App {
                 approvals_reviewer_override,
                 sandbox_policy_override,
                 /*windows_sandbox_level*/ None,
+                /*model_provider*/ None,
                 /*model*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
@@ -1436,6 +1437,7 @@ impl App {
                         /*sandbox_policy*/ None,
                         #[cfg(target_os = "windows")]
                         Some(windows_sandbox_level),
+                        /*model_provider*/ None,
                         /*model*/ None,
                         /*effort*/ None,
                         /*summary*/ None,
@@ -4502,6 +4504,9 @@ impl App {
             AppEvent::UpdateReasoningEffort(effort) => {
                 self.on_update_reasoning_effort(effort);
             }
+            AppEvent::UpdateModelProvider(model_provider_id) => {
+                self.chat_widget.set_model_provider(&model_provider_id);
+            }
             AppEvent::UpdateModel(model) => {
                 self.chat_widget.set_model(&model);
             }
@@ -4834,6 +4839,7 @@ impl App {
                                         /*sandbox_policy*/ None,
                                         #[cfg(target_os = "windows")]
                                         Some(windows_sandbox_level),
+                                        /*model_provider*/ None,
                                         /*model*/ None,
                                         /*effort*/ None,
                                         /*summary*/ None,
@@ -4860,6 +4866,7 @@ impl App {
                                         Some(preset.sandbox.clone()),
                                         #[cfg(target_os = "windows")]
                                         Some(windows_sandbox_level),
+                                        /*model_provider*/ None,
                                         /*model*/ None,
                                         /*effort*/ None,
                                         /*summary*/ None,
@@ -4905,15 +4912,20 @@ impl App {
                 model,
                 effort,
             } => {
-                let profile = self.active_profile.as_deref();
+                let profile = self.active_profile.clone();
                 let target_provider = provider_id
                     .clone()
                     .unwrap_or_else(|| self.config.model_provider_id.clone());
-                let mut builder = ConfigEditsBuilder::new(&self.config.codex_home).with_profile(profile);
+                let mut builder = ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_profile(profile.as_deref());
                 if provider_id.is_some() {
                     builder = builder.set_model_provider(Some(target_provider.as_str()));
                 }
-                match builder.set_model(Some(model.as_str()), effort).apply().await {
+                match builder
+                    .set_model(Some(model.as_str()), effort)
+                    .apply()
+                    .await
+                {
                     Ok(()) => {
                         let effort_label = effort
                             .map(|selected_effort| selected_effort.to_string())
@@ -4923,7 +4935,7 @@ impl App {
                         );
                         let provider_changed = target_provider != self.config.model_provider_id;
                         let mut message = if provider_changed {
-                            format!("Saved {target_provider} / {model}")
+                            format!("Switched to {target_provider} / {model}")
                         } else {
                             format!("Model changed to {model}")
                         };
@@ -4931,10 +4943,7 @@ impl App {
                             message.push(' ');
                             message.push_str(label);
                         }
-                        if provider_changed {
-                            message.push_str(". Restart Codexpilot to load that provider's model catalog.");
-                        }
-                        if let Some(profile) = profile {
+                        if let Some(profile) = profile.as_deref() {
                             message.push_str(" for ");
                             message.push_str(profile);
                             message.push_str(" profile");
@@ -4946,7 +4955,7 @@ impl App {
                             error = %err,
                             "failed to persist model selection"
                         );
-                        if let Some(profile) = profile {
+                        if let Some(profile) = profile.as_deref() {
                             self.chat_widget.add_error_message(format!(
                                 "Failed to save model/provider for profile `{profile}`: {err}"
                             ));

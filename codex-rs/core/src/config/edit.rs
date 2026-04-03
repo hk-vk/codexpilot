@@ -30,9 +30,7 @@ pub enum ConfigEdit {
         effort: Option<ReasoningEffort>,
     },
     /// Update the active (or default) model provider selection.
-    SetModelProvider {
-        model_provider: Option<String>,
-    },
+    SetModelProvider { model_provider: Option<String> },
     /// Update the service tier preference for future turns.
     SetServiceTier { service_tier: Option<ServiceTier> },
     /// Update the active (or default) model personality.

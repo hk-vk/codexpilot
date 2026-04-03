@@ -6466,6 +6466,7 @@ impl CodexMessageProcessor {
                             .map(codex_app_server_protocol::ApprovalsReviewer::to_core),
                         sandbox_policy: params.sandbox_policy.map(|p| p.to_core()),
                         windows_sandbox_level: None,
+                        model_provider: None,
                         model: params.model,
                         effort: params.effort.map(Some),
                         summary: params.summary,
