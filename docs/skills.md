@@ -1,3 +1,3 @@
 # Skills
 
-For information about skills, refer to [this documentation](https://developers.openai.com/codex/skills).
+This document covers skill usage in the local fork.

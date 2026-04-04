@@ -75,7 +75,7 @@ When a change updates model catalogs or model metadata (`/models` payloads, pres
 
 If you run into problems setting up the project, would like feedback on an idea, or just want to say _hi_ - please open a Discussion topic or jump into the relevant issue. We are happy to help.
 
-Together we can make Codex CLI an incredible tool. **Happy hacking!** :rocket:
+Together we can make Codexpilot an incredible tool. **Happy hacking!** :rocket:
 
 ### Contributor license agreement (CLA)
 

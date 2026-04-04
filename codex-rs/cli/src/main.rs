@@ -56,7 +56,7 @@ use codex_features::Stage;
 use codex_features::is_known_feature_key;
 use codex_terminal_detection::TerminalName;
 
-/// Codex CLI
+/// Codexpilot CLI
 ///
 /// If no subcommand is specified, options will be forwarded to the interactive CLI.
 #[derive(Debug, Parser)]
@@ -98,7 +98,7 @@ enum Subcommand {
     /// Remove stored authentication credentials.
     Logout(LogoutCommand),
 
-    /// Manage external MCP servers for Codex.
+    /// Manage external MCP servers for the current app.
     Mcp(McpCli),
 
     /// Start Codex as an MCP server (stdio).
@@ -380,7 +380,7 @@ struct AppServerCommand {
     /// enabled = false
     /// ```
     ///
-    /// See https://developers.openai.com/codex/config-advanced/#metrics for more details.
+    /// See the local configuration docs for more details.
     #[arg(long = "analytics-default-enabled")]
     analytics_default_enabled: bool,
 

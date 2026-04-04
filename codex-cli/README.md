@@ -1,10 +1,8 @@
-<h1 align="center">OpenAI Codex CLI</h1>
-<p align="center">Lightweight coding agent that runs in your terminal</p>
-
-<p align="center"><code>npm i -g @openai/codex</code></p>
+<h1 align="center">Codexpilot CLI (Legacy TypeScript)</h1>
+<p align="center">Legacy terminal coding agent implementation</p>
 
 > [!IMPORTANT]
-> This is the documentation for the _legacy_ TypeScript implementation of the Codex CLI. It has been superseded by the _Rust_ implementation. See the [README in the root of the Codex repository](https://github.com/openai/codex/blob/main/README.md) for details.
+> This is the documentation for the legacy TypeScript implementation. The Rust implementation is the main Codexpilot experience. See the repository root README for the current fork documentation.
 
 ![Codex demo GIF using: codex "explain this codebase to me"](../.github/demo.gif)
 
@@ -63,7 +61,7 @@
 
 ## Experimental technology disclaimer
 
-Codex CLI is an experimental project under active development. It is not yet stable, may contain bugs, incomplete features, or undergo breaking changes. We're building it in the open with the community and welcome:
+This legacy CLI is experimental, may contain bugs, incomplete features, or breaking changes. Contributions are still welcome:
 
 - Bug reports
 - Feature requests
@@ -74,10 +72,12 @@ Help us improve by filing issues or submitting PRs (see the section below for ho
 
 ## Quickstart
 
-Install globally:
+Build and run the current Rust implementation from the repository root:
 
 ```shell
-npm install -g @openai/codex
+cd codex-rs
+cargo build -p codex-cli --bin codexpilot
+./target/debug/codexpilot
 ```
 
 Next, set your OpenAI API key as an environment variable:
@@ -148,9 +148,9 @@ they'll be committed to your working directory.
 
 ---
 
-## Why Codex?
+## Why Codexpilot?
 
-Codex CLI is built for developers who already **live in the terminal** and want
+Codexpilot is built for developers who already **live in the terminal** and want
 ChatGPT-level reasoning **plus** the power to actually run code, manipulate
 files, and iterate - all under version control. In short, it's _chat-driven
 development_ that understands and executes your repo.
@@ -243,14 +243,12 @@ Disable loading of these files with `--no-project-doc` or the environment variab
 
 ## Non-interactive / CI mode
 
-Run Codex head-less in pipelines. Example GitHub Action step:
+Run the CLI head-less in pipelines. Example step:
 
 ```yaml
-- name: Update changelog via Codex
+- name: Update changelog via Codexpilot
   run: |
-    npm install -g @openai/codex
-    export OPENAI_API_KEY="${{ secrets.OPENAI_KEY }}"
-    codex -a auto-edit --quiet "update CHANGELOG for next release"
+    ./target/debug/codexpilot -a auto-edit --quiet "update CHANGELOG for next release"
 ```
 
 Set `CODEX_QUIET_MODE=1` to silence interactive UI noise.
@@ -267,7 +265,7 @@ DEBUG=true codex
 
 ## Recipes
 
-Below are a few bite-size examples you can copy-paste. Replace the text in quotes with your own task. See the [prompting guide](https://github.com/openai/codex/blob/main/codex-cli/examples/prompting_guide.md) for more tips and usage patterns.
+Below are a few bite-size examples you can copy-paste. Replace the text in quotes with your own task.
 
 | ✨  | What you type                                                                   | What happens                                                               |
 | --- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -284,27 +282,12 @@ Below are a few bite-size examples you can copy-paste. Replace the text in quote
 ## Installation
 
 <details open>
-<summary><strong>From npm (Recommended)</strong></summary>
-
-```bash
-npm install -g @openai/codex
-# or
-yarn global add @openai/codex
-# or
-bun install -g @openai/codex
-# or
-pnpm add -g @openai/codex
-```
-
-</details>
-
-<details>
 <summary><strong>Build from source</strong></summary>
 
 ```bash
 # Clone the repository and navigate to the CLI package
-git clone https://github.com/openai/codex.git
-cd codex/codex-cli
+git clone git@github.com:hk-vk/codexpilot.git
+cd codexpilot/codex-cli
 
 # Enable corepack
 corepack enable
@@ -521,24 +504,19 @@ Not directly. It requires [Windows Subsystem for Linux (WSL2)](https://learn.mic
 
 ## Zero data retention (ZDR) usage
 
-Codex CLI **does** support OpenAI organizations with [Zero Data Retention (ZDR)](https://platform.openai.com/docs/guides/your-data#zero-data-retention) enabled. If your OpenAI organization has Zero Data Retention enabled and you still encounter errors such as:
+If your OpenAI organization has Zero Data Retention (ZDR) enabled and you still encounter errors such as:
 
 ```
 OpenAI rejected the request. Error details: Status: 400, Code: unsupported_parameter, Type: invalid_request_error, Message: 400 Previous response cannot be used for this organization due to Zero Data Retention.
 ```
 
-You may need to upgrade to a more recent version with: `npm i -g @openai/codex@latest`
+You may need to rebuild from the latest source checkout instead.
 
 ---
 
-## Codex open source fund
+## Project status
 
-We're excited to launch a **$1 million initiative** supporting open source projects that use Codex CLI and other OpenAI models.
-
-- Grants are awarded up to **$25,000** API credits.
-- Applications are reviewed **on a rolling basis**.
-
-**Interested? [Apply here](https://openai.com/form/codex-open-source-fund/).**
+This fork does not currently advertise or operate an open source fund.
 
 ---
 
@@ -628,7 +606,7 @@ To debug the CLI with a visual debugger, do the following in the `codex-cli` fol
 
 If you run into problems setting up the project, would like feedback on an idea, or just want to say _hi_ - please open a Discussion or jump into the relevant issue. We are happy to help.
 
-Together we can make Codex CLI an incredible tool. **Happy hacking!** :rocket:
+Together we can keep improving Codexpilot. **Happy hacking!** :rocket:
 
 ### Contributor license agreement (CLA)
 

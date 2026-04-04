@@ -1,3 +1,3 @@
-# Getting started with Codex CLI
+# Getting started with Codexpilot
 
-For an overview of Codex CLI features, see [this documentation](https://developers.openai.com/codex/cli/features#running-in-interactive-mode).
+Build `codexpilot`, launch it, and use the local docs in this repository for configuration, slash commands, and session management.

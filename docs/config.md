@@ -1,21 +1,15 @@
 # Configuration
 
-For basic configuration instructions, see [this documentation](https://developers.openai.com/codex/config-basic).
-
-For advanced configuration instructions, see [this documentation](https://developers.openai.com/codex/config-advanced).
-
-For a full configuration reference, see [this documentation](https://developers.openai.com/codex/config-reference).
+This document is the local configuration reference for the fork. Prefer these repository docs over upstream service documentation when configuring Codexpilot.
 
 ## Connecting to MCP servers
 
-Codex can connect to MCP servers configured in `~/.codex/config.toml`. See the configuration reference for the latest MCP server options:
-
-- https://developers.openai.com/codex/config-reference
+Codexpilot can connect to MCP servers configured in the app `config.toml` under its local home directory.
 
 ## MCP tool approvals
 
 Codex stores per-tool approval overrides for custom MCP servers under
-`mcp_servers` in `~/.codex/config.toml`:
+`mcp_servers` in the app `config.toml`:
 
 ```toml
 [mcp_servers.docs.tools.search]
@@ -30,9 +24,7 @@ and are labeled as connected; others are marked as can be installed.
 
 ## Notify
 
-Codex can run a notification hook when the agent finishes a turn. See the configuration reference for the latest notification settings:
-
-- https://developers.openai.com/codex/config-reference
+Codexpilot can run a notification hook when the agent finishes a turn. See this document and the generated config schema for the latest notification settings.
 
 When Codex knows which client started the turn, the legacy notify JSON payload also includes a top-level `client` field. The TUI reports `codex-tui`, and the app server reports the `clientInfo.name` value from `initialize`.
 

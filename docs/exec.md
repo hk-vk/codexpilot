@@ -1,3 +1,3 @@
 # Non-interactive mode
 
-For information about non-interactive mode, see [this documentation](https://developers.openai.com/codex/noninteractive).
+This document covers non-interactive usage for the local fork. Use `codexpilot exec` for scripted and CI-style runs.

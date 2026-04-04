@@ -1,3 +1,3 @@
 # Execution policy
 
-For an overview of execution policy rules, see [this documentation](https://developers.openai.com/codex/exec-policy).
+This document describes execution policy behavior in the local fork.
