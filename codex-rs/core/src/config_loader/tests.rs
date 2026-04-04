@@ -1,5 +1,6 @@
 use super::LoaderOverrides;
 use super::load_config_layers_state;
+use super::strip_codexpilot_upstream_user_config_keys;
 use crate::config::ConfigBuilder;
 use crate::config::ConfigOverrides;
 use crate::config::ConfigToml;
@@ -57,6 +58,30 @@ async fn make_config_for_test(
         .expect("serialize config"),
     )
     .await
+}
+
+#[test]
+fn strip_codexpilot_upstream_user_config_keys_removes_mcp_servers() {
+    let mut config = toml::from_str::<TomlValue>(
+        r#"
+model = "gpt-5.4"
+
+[mcp_servers.posthog]
+command = "npx"
+"#,
+    )
+    .expect("parse config");
+
+    strip_codexpilot_upstream_user_config_keys(&mut config);
+
+    let TomlValue::Table(table) = config else {
+        panic!("expected table");
+    };
+    assert!(!table.contains_key("mcp_servers"));
+    assert_eq!(
+        table.get("model"),
+        Some(&TomlValue::String("gpt-5.4".to_string()))
+    );
 }
 
 #[tokio::test]

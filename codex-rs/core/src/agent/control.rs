@@ -5,8 +5,8 @@ use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::resolve_role_config;
 use crate::agent::status::is_final;
 use crate::codex_thread::ThreadConfigSnapshot;
-use crate::find_archived_thread_path_by_id_str;
-use crate::find_thread_path_by_id_str;
+use crate::find_archived_thread_path_by_id_str_across_roots;
+use crate::find_thread_path_by_id_str_across_roots;
 use crate::rollout::RolloutRecorder;
 use crate::session_prefix::format_subagent_context_line;
 use crate::session_prefix::format_subagent_notification_message;
@@ -295,7 +295,7 @@ impl AgentControl {
         let rollout_path = parent_thread
             .as_ref()
             .and_then(|parent_thread| parent_thread.rollout_path())
-            .or(find_thread_path_by_id_str(
+            .or(find_thread_path_by_id_str_across_roots(
                 config.codex_home.as_path(),
                 &parent_thread_id.to_string(),
             )
@@ -461,18 +461,20 @@ impl AgentControl {
         let inherited_exec_policy = self
             .inherited_exec_policy_for_source(&state, Some(&session_source), &config)
             .await;
-        let rollout_path =
-            match find_thread_path_by_id_str(config.codex_home.as_path(), &thread_id.to_string())
-                .await?
-            {
-                Some(rollout_path) => rollout_path,
-                None => find_archived_thread_path_by_id_str(
-                    config.codex_home.as_path(),
-                    &thread_id.to_string(),
-                )
-                .await?
-                .ok_or_else(|| CodexErr::ThreadNotFound(thread_id))?,
-            };
+        let rollout_path = match find_thread_path_by_id_str_across_roots(
+            config.codex_home.as_path(),
+            &thread_id.to_string(),
+        )
+        .await?
+        {
+            Some(rollout_path) => rollout_path,
+            None => find_archived_thread_path_by_id_str_across_roots(
+                config.codex_home.as_path(),
+                &thread_id.to_string(),
+            )
+            .await?
+            .ok_or_else(|| CodexErr::ThreadNotFound(thread_id))?,
+        };
 
         let resumed_thread = state
             .resume_thread_from_rollout_with_source(

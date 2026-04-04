@@ -45,11 +45,7 @@ fn model_from_preset(preset: &ModelPreset) -> Model {
             .collect(),
         default_reasoning_effort: preset.default_reasoning_effort,
         input_modalities: preset.input_modalities.clone(),
-        // `write_models_cache()` round-trips through a simplified ModelInfo fixture that does not
-        // preserve personality placeholders in base instructions, so app-server list results from
-        // cache report `supports_personality = false`.
-        // todo(sayan): fix, maybe make roundtrip use ModelInfo only
-        supports_personality: false,
+        supports_personality: preset.supports_personality,
         is_default: preset.is_default,
     }
 }
@@ -84,6 +80,7 @@ async fn list_models_returns_all_models_with_large_limit() -> Result<()> {
             limit: Some(100),
             cursor: None,
             include_hidden: None,
+            model_provider: None,
         })
         .await?;
 
@@ -118,6 +115,7 @@ async fn list_models_includes_hidden_models() -> Result<()> {
             limit: Some(100),
             cursor: None,
             include_hidden: Some(true),
+            model_provider: None,
         })
         .await?;
 
@@ -155,6 +153,7 @@ async fn list_models_pagination_works() -> Result<()> {
                 limit: Some(1),
                 cursor: cursor.clone(),
                 include_hidden: None,
+                model_provider: None,
             })
             .await?;
 
@@ -199,6 +198,7 @@ async fn list_models_rejects_invalid_cursor() -> Result<()> {
             limit: None,
             cursor: Some("invalid".to_string()),
             include_hidden: None,
+            model_provider: None,
         })
         .await?;
 

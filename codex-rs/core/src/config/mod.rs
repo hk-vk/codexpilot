@@ -156,7 +156,12 @@ const RESERVED_MODEL_PROVIDER_IDS: [&str; 3] = [
 ];
 
 fn resolve_sqlite_home_env(resolved_cwd: &Path) -> Option<PathBuf> {
-    let raw = std::env::var(codex_state::SQLITE_HOME_ENV).ok()?;
+    let env_var = codex_utils_home_dir::current_app_sqlite_home_env_var();
+    let raw = std::env::var(env_var).ok().or_else(|| {
+        (env_var == codex_state::SQLITE_HOME_ENV)
+            .then(|| std::env::var(codex_state::SQLITE_HOME_ENV).ok())
+            .flatten()
+    })?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;

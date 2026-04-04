@@ -1,10 +1,12 @@
 use chrono::DateTime;
 use chrono::Utc;
+use codex_model_provider_info::OPENAI_PROVIDER_ID;
 use codex_protocol::openai_models::ModelInfo;
 use serde::Deserialize;
 use serde::Serialize;
 use std::io;
 use std::io::ErrorKind;
+use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::fs;
@@ -16,14 +18,16 @@ use tracing::info;
 pub(crate) struct ModelsCacheManager {
     cache_path: PathBuf,
     cache_ttl: Duration,
+    provider_id: String,
 }
 
 impl ModelsCacheManager {
     /// Create a new cache manager with the given path and TTL.
-    pub(crate) fn new(cache_path: PathBuf, cache_ttl: Duration) -> Self {
+    pub(crate) fn new(cache_path: PathBuf, cache_ttl: Duration, provider_id: String) -> Self {
         Self {
             cache_path,
             cache_ttl,
+            provider_id,
         }
     }
 
@@ -47,12 +51,21 @@ impl ModelsCacheManager {
             fetched_at = %cache.fetched_at,
             "models cache: loaded cache file"
         );
-        if cache.client_version.as_deref() != Some(expected_version) {
+        if !cache_version_matches(cache.client_version.as_deref(), expected_version) {
             info!(
                 cache_path = %self.cache_path.display(),
                 expected_version,
                 cached_version = ?cache.client_version,
                 "models cache: cache version mismatch"
+            );
+            return None;
+        }
+        if !cache_provider_matches(cache.provider_id.as_deref(), self.provider_id.as_str()) {
+            info!(
+                cache_path = %self.cache_path.display(),
+                expected_provider_id = %self.provider_id,
+                cached_provider_id = ?cache.provider_id,
+                "models cache: cache provider mismatch"
             );
             return None;
         }
@@ -84,6 +97,7 @@ impl ModelsCacheManager {
             fetched_at: Utc::now(),
             etag,
             client_version: Some(client_version),
+            provider_id: Some(self.provider_id.clone()),
             models: models.to_vec(),
         };
         if let Err(err) = self.save_internal(&cache).await {
@@ -102,15 +116,16 @@ impl ModelsCacheManager {
     }
 
     async fn load(&self) -> io::Result<Option<ModelsCache>> {
-        match fs::read(&self.cache_path).await {
-            Ok(contents) => {
-                let cache = serde_json::from_slice(&contents)
-                    .map_err(|err| io::Error::new(ErrorKind::InvalidData, err.to_string()))?;
-                Ok(Some(cache))
-            }
-            Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(err),
+        if let Some(cache) = load_cache_file(self.cache_path.as_path()).await? {
+            return Ok(Some(cache));
         }
+        if codex_utils_home_dir::current_app_is_codexpilot()
+            && let Some(upstream_cache_path) = upstream_models_cache_path(self.cache_path.as_path())
+            && let Some(cache) = load_cache_file(upstream_cache_path.as_path()).await?
+        {
+            return Ok(Some(cache));
+        }
+        Ok(None)
     }
 
     async fn save_internal(&self, cache: &ModelsCache) -> io::Result<()> {
@@ -157,6 +172,29 @@ impl ModelsCacheManager {
     }
 }
 
+async fn load_cache_file(path: &Path) -> io::Result<Option<ModelsCache>> {
+    match fs::read(path).await {
+        Ok(contents) => {
+            let cache = serde_json::from_slice(&contents)
+                .map_err(|err| io::Error::new(ErrorKind::InvalidData, err.to_string()))?;
+            Ok(Some(cache))
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+fn upstream_models_cache_path(current_cache_path: &Path) -> Option<PathBuf> {
+    let current_root = current_cache_path.parent()?;
+    let upstream_root = codex_utils_home_dir::find_upstream_codex_home().ok()?;
+    if upstream_root == current_root {
+        return None;
+    }
+    current_cache_path
+        .file_name()
+        .map(|file_name| upstream_root.join(file_name))
+}
+
 /// Serialized snapshot of models and metadata cached on disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ModelsCache {
@@ -165,7 +203,24 @@ pub(crate) struct ModelsCache {
     pub(crate) etag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) client_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_id: Option<String>,
     pub(crate) models: Vec<ModelInfo>,
+}
+
+fn cache_version_matches(cached_version: Option<&str>, expected_version: &str) -> bool {
+    match cached_version {
+        Some(cached_version) if cached_version == expected_version => true,
+        Some("0.0.0") if expected_version != "0.0.0" => true,
+        _ => false,
+    }
+}
+
+fn cache_provider_matches(cached_provider_id: Option<&str>, expected_provider_id: &str) -> bool {
+    match cached_provider_id {
+        Some(cached_provider_id) => cached_provider_id == expected_provider_id,
+        None => expected_provider_id == OPENAI_PROVIDER_ID,
+    }
 }
 
 impl ModelsCache {

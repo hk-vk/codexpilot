@@ -106,7 +106,7 @@ use codex_app_server_protocol::build_turns_from_rollout_items;
 use codex_app_server_protocol::convert_patch_changes;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
-use codex_core::find_thread_name_by_id;
+use codex_core::find_thread_name_by_id_across_roots;
 use codex_core::review_format::format_review_findings_block;
 use codex_core::review_prompts;
 use codex_protocol::ThreadId;
@@ -1812,7 +1812,12 @@ pub(crate) async fn apply_bespoke_event_handling(
                                 thread.status = thread_watch_manager
                                     .loaded_status_for_thread(&thread.id)
                                     .await;
-                                match find_thread_name_by_id(codex_home, &conversation_id).await {
+                                match find_thread_name_by_id_across_roots(
+                                    codex_home,
+                                    &conversation_id,
+                                )
+                                .await
+                                {
                                     Ok(name) => {
                                         thread.name = name;
                                     }

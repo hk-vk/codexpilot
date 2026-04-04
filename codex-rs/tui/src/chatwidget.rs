@@ -66,7 +66,7 @@ use crate::terminal_title::SetTerminalTitleResult;
 use crate::terminal_title::clear_terminal_title;
 use crate::terminal_title::set_terminal_title;
 use crate::text_formatting::proper_join;
-use crate::version::CODEX_CLI_VERSION;
+use crate::version::display_cli_version;
 use codex_app_server_protocol::AppSummary;
 use codex_app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
 use codex_app_server_protocol::CollabAgentState as AppServerCollabAgentState;
@@ -8053,7 +8053,7 @@ impl ChatWidget {
         }
     }
 
-    fn open_model_popup_with_presets_for_provider(
+    pub(crate) fn open_model_popup_with_presets_for_provider(
         &mut self,
         presets: Vec<ModelPreset>,
         provider_id: Option<&str>,
@@ -10072,7 +10072,7 @@ impl ChatWidget {
             /*reasoning_effort*/ None,
             /*show_fast_status*/ false,
             config.cwd.to_path_buf(),
-            CODEX_CLI_VERSION,
+            display_cli_version(),
         ))
     }
 

@@ -207,10 +207,10 @@ use codex_core::exec::ExecCapturePolicy;
 use codex_core::exec::ExecExpiration;
 use codex_core::exec::ExecParams;
 use codex_core::exec_env::create_env;
-use codex_core::find_archived_thread_path_by_id_str;
-use codex_core::find_thread_name_by_id;
+use codex_core::find_archived_thread_path_by_id_str_across_roots;
+use codex_core::find_thread_name_by_id_across_roots;
 use codex_core::find_thread_names_by_ids;
-use codex_core::find_thread_path_by_id_str;
+use codex_core::find_thread_path_by_id_str_across_roots;
 use codex_core::parse_cursor;
 use codex_core::plugins::MarketplaceError;
 use codex_core::plugins::MarketplacePluginSource;
@@ -225,6 +225,8 @@ use codex_core::read_head_for_summary;
 use codex_core::read_session_meta_line;
 use codex_core::rollout_date_parts;
 use codex_core::sandboxing::SandboxPermissions;
+use codex_core::session_storage_roots;
+use codex_core::storage_root_for_rollout_path;
 use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_core::windows_sandbox::WindowsSandboxSetupMode as CoreWindowsSandboxSetupMode;
 use codex_core::windows_sandbox::WindowsSandboxSetupRequest;
@@ -849,10 +851,8 @@ impl CodexMessageProcessor {
                 let outgoing = self.outgoing.clone();
                 let thread_manager = self.thread_manager.clone();
                 let request_id = to_connection_request_id(request_id);
-
-                tokio::spawn(async move {
-                    Self::list_models(outgoing, thread_manager, request_id, params).await;
-                });
+                self.list_models(outgoing, thread_manager, request_id, params)
+                    .await;
             }
             ClientRequest::ExperimentalFeatureList { request_id, params } => {
                 self.experimental_feature_list(to_connection_request_id(request_id), params)
@@ -2478,29 +2478,32 @@ impl CodexMessageProcessor {
             }
         };
 
-        let rollout_path =
-            match find_thread_path_by_id_str(&self.config.codex_home, &thread_id.to_string()).await
-            {
-                Ok(Some(p)) => p,
-                Ok(None) => {
-                    let error = JSONRPCErrorError {
-                        code: INVALID_REQUEST_ERROR_CODE,
-                        message: format!("no rollout found for thread id {thread_id}"),
-                        data: None,
-                    };
-                    self.outgoing.send_error(request_id, error).await;
-                    return;
-                }
-                Err(err) => {
-                    let error = JSONRPCErrorError {
-                        code: INVALID_REQUEST_ERROR_CODE,
-                        message: format!("failed to locate thread id {thread_id}: {err}"),
-                        data: None,
-                    };
-                    self.outgoing.send_error(request_id, error).await;
-                    return;
-                }
-            };
+        let rollout_path = match find_thread_path_by_id_str_across_roots(
+            &self.config.codex_home,
+            &thread_id.to_string(),
+        )
+        .await
+        {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                let error = JSONRPCErrorError {
+                    code: INVALID_REQUEST_ERROR_CODE,
+                    message: format!("no rollout found for thread id {thread_id}"),
+                    data: None,
+                };
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+            Err(err) => {
+                let error = JSONRPCErrorError {
+                    code: INVALID_REQUEST_ERROR_CODE,
+                    message: format!("failed to locate thread id {thread_id}: {err}"),
+                    data: None,
+                };
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
 
         let thread_id_str = thread_id.to_string();
         match self.archive_thread_common(thread_id, &rollout_path).await {
@@ -2628,20 +2631,23 @@ impl CodexMessageProcessor {
             return;
         }
 
-        let thread_exists =
-            match find_thread_path_by_id_str(&self.config.codex_home, &thread_id.to_string()).await
-            {
-                Ok(Some(_)) => true,
-                Ok(None) => false,
-                Err(err) => {
-                    self.send_invalid_request_error(
-                        request_id,
-                        format!("failed to locate thread id {thread_id}: {err}"),
-                    )
-                    .await;
-                    return;
-                }
-            };
+        let thread_exists = match find_thread_path_by_id_str_across_roots(
+            &self.config.codex_home,
+            &thread_id.to_string(),
+        )
+        .await
+        {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(err) => {
+                self.send_invalid_request_error(
+                    request_id,
+                    format!("failed to locate thread id {thread_id}: {err}"),
+                )
+                .await;
+                return;
+            }
+        };
 
         if !thread_exists {
             self.send_invalid_request_error(request_id, format!("thread not found: {thread_id}"))
@@ -2917,33 +2923,35 @@ impl CodexMessageProcessor {
             return Ok(());
         }
 
-        let rollout_path =
-            match find_thread_path_by_id_str(&self.config.codex_home, &thread_uuid.to_string())
-                .await
+        let rollout_path = match find_thread_path_by_id_str_across_roots(
+            &self.config.codex_home,
+            &thread_uuid.to_string(),
+        )
+        .await
+        {
+            Ok(Some(path)) => path,
+            Ok(None) => match find_archived_thread_path_by_id_str_across_roots(
+                &self.config.codex_home,
+                &thread_uuid.to_string(),
+            )
+            .await
             {
                 Ok(Some(path)) => path,
-                Ok(None) => match find_archived_thread_path_by_id_str(
-                    &self.config.codex_home,
-                    &thread_uuid.to_string(),
-                )
-                .await
-                {
-                    Ok(Some(path)) => path,
-                    Ok(None) => {
-                        return Err(invalid_request(format!("thread not found: {thread_uuid}")));
-                    }
-                    Err(err) => {
-                        return Err(internal_error(format!(
-                            "failed to locate archived thread id {thread_uuid}: {err}"
-                        )));
-                    }
-                },
+                Ok(None) => {
+                    return Err(invalid_request(format!("thread not found: {thread_uuid}")));
+                }
                 Err(err) => {
                     return Err(internal_error(format!(
-                        "failed to locate thread id {thread_uuid}: {err}"
+                        "failed to locate archived thread id {thread_uuid}: {err}"
                     )));
                 }
-            };
+            },
+            Err(err) => {
+                return Err(internal_error(format!(
+                    "failed to locate thread id {thread_uuid}: {err}"
+                )));
+            }
+        };
 
         reconcile_rollout(
             Some(state_db_ctx),
@@ -2986,7 +2994,7 @@ impl CodexMessageProcessor {
             }
         };
 
-        let archived_path = match find_archived_thread_path_by_id_str(
+        let archived_path = match find_archived_thread_path_by_id_str_across_roots(
             &self.config.codex_home,
             &thread_id.to_string(),
         )
@@ -3502,27 +3510,29 @@ impl CodexMessageProcessor {
         };
         let mut rollout_path = db_summary.as_ref().map(|summary| summary.path.clone());
         if rollout_path.is_none() || include_turns {
-            rollout_path =
-                match find_thread_path_by_id_str(&self.config.codex_home, &thread_uuid.to_string())
-                    .await
-                {
-                    Ok(Some(path)) => Some(path),
-                    Ok(None) => {
-                        if include_turns {
-                            None
-                        } else {
-                            rollout_path
-                        }
+            rollout_path = match find_thread_path_by_id_str_across_roots(
+                &self.config.codex_home,
+                &thread_uuid.to_string(),
+            )
+            .await
+            {
+                Ok(Some(path)) => Some(path),
+                Ok(None) => {
+                    if include_turns {
+                        None
+                    } else {
+                        rollout_path
                     }
-                    Err(err) => {
-                        self.send_invalid_request_error(
-                            request_id,
-                            format!("failed to locate thread id {thread_uuid}: {err}"),
-                        )
-                        .await;
-                        return;
-                    }
-                };
+                }
+                Err(err) => {
+                    self.send_invalid_request_error(
+                        request_id,
+                        format!("failed to locate thread id {thread_uuid}: {err}"),
+                    )
+                    .await;
+                    return;
+                }
+            };
         }
 
         if include_turns && rollout_path.is_none() && db_summary.is_some() {
@@ -3745,6 +3755,13 @@ impl CodexMessageProcessor {
             thread_history
         };
 
+        let resume_storage_root = match &thread_history {
+            InitialHistory::Resumed(resumed_history) => storage_root_for_rollout_path(
+                &self.config.codex_home,
+                resumed_history.rollout_path.as_path(),
+            ),
+            InitialHistory::New | InitialHistory::Forked(_) => None,
+        };
         let history_cwd = thread_history.session_cwd();
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
@@ -3761,6 +3778,7 @@ impl CodexMessageProcessor {
         let persisted_resume_metadata = self
             .load_and_apply_persisted_resume_metadata(
                 &thread_history,
+                resume_storage_root.as_deref(),
                 &mut request_overrides,
                 &mut typesafe_overrides,
             )
@@ -3770,7 +3788,7 @@ impl CodexMessageProcessor {
         let cloud_requirements = self.current_cloud_requirements();
         let cli_overrides = self.current_cli_overrides();
         let runtime_feature_enablement = self.current_runtime_feature_enablement();
-        let config = match derive_config_for_cwd(
+        let mut config = match derive_config_for_cwd(
             &cli_overrides,
             request_overrides,
             typesafe_overrides,
@@ -3788,6 +3806,15 @@ impl CodexMessageProcessor {
                 return;
             }
         };
+        if let Some(storage_root) = resume_storage_root {
+            config.codex_home = storage_root.clone();
+            if storage_root == self.config.codex_home {
+                config.sqlite_home = self.config.sqlite_home.clone();
+            } else {
+                config.sqlite_home = storage_root.clone();
+            }
+            config.log_dir = storage_root.join("log");
+        }
 
         let fallback_model_provider = config.model_provider_id.clone();
         let response_history = thread_history.clone();
@@ -3901,13 +3928,23 @@ impl CodexMessageProcessor {
     async fn load_and_apply_persisted_resume_metadata(
         &self,
         thread_history: &InitialHistory,
+        storage_root: Option<&Path>,
         request_overrides: &mut Option<HashMap<String, serde_json::Value>>,
         typesafe_overrides: &mut ConfigOverrides,
     ) -> Option<ThreadMetadata> {
         let InitialHistory::Resumed(resumed_history) = thread_history else {
             return None;
         };
-        let state_db_ctx = get_state_db(&self.config).await?;
+        let mut state_config = self.config.as_ref().clone();
+        if let Some(storage_root) = storage_root {
+            state_config.codex_home = storage_root.to_path_buf();
+            if storage_root == self.config.codex_home.as_path() {
+                state_config.sqlite_home = self.config.sqlite_home.clone();
+            } else {
+                state_config.sqlite_home = storage_root.to_path_buf();
+            }
+        }
+        let state_db_ctx = get_state_db(&state_config).await?;
         let persisted_metadata = state_db_ctx
             .get_thread(resumed_history.conversation_id)
             .await
@@ -3940,7 +3977,7 @@ impl CodexMessageProcessor {
                 if path.exists() {
                     path
                 } else {
-                    match find_thread_path_by_id_str(
+                    match find_thread_path_by_id_str_across_roots(
                         &self.config.codex_home,
                         &existing_thread_id.to_string(),
                     )
@@ -3966,7 +4003,7 @@ impl CodexMessageProcessor {
                     }
                 }
             } else {
-                match find_thread_path_by_id_str(
+                match find_thread_path_by_id_str_across_roots(
                     &self.config.codex_home,
                     &existing_thread_id.to_string(),
                 )
@@ -4124,7 +4161,7 @@ impl CodexMessageProcessor {
                 }
             };
 
-            match find_thread_path_by_id_str(
+            match find_thread_path_by_id_str_across_roots(
                 &self.config.codex_home,
                 &existing_thread_id.to_string(),
             )
@@ -4212,7 +4249,7 @@ impl CodexMessageProcessor {
     }
 
     async fn attach_thread_name(&self, thread_id: ThreadId, thread: &mut Thread) {
-        match find_thread_name_by_id(&self.config.codex_home, &thread_id).await {
+        match find_thread_name_by_id_across_roots(&self.config.codex_home, &thread_id).await {
             Ok(name) => {
                 thread.name = name;
             }
@@ -4255,7 +4292,7 @@ impl CodexMessageProcessor {
                 }
             };
 
-            match find_thread_path_by_id_str(
+            match find_thread_path_by_id_str_across_roots(
                 &self.config.codex_home,
                 &existing_thread_id.to_string(),
             )
@@ -4545,7 +4582,7 @@ impl CodexMessageProcessor {
                 }
             }
             GetConversationSummaryParams::ThreadId { conversation_id } => {
-                match codex_core::find_thread_path_by_id_str(
+                match codex_core::find_thread_path_by_id_str_across_roots(
                     &self.config.codex_home,
                     &conversation_id.to_string(),
                 )
@@ -4602,6 +4639,38 @@ impl CodexMessageProcessor {
             cwd,
             search_term,
         } = filters;
+        let model_provider_filter = match model_providers {
+            Some(providers) => {
+                if providers.is_empty() {
+                    None
+                } else {
+                    Some(providers)
+                }
+            }
+            None => Some(vec![self.config.model_provider_id.clone()]),
+        };
+        let fallback_provider = self.config.model_provider_id.clone();
+        let (allowed_sources_vec, source_kind_filter) = compute_source_filters(source_kinds);
+        let allowed_sources = allowed_sources_vec.as_slice();
+        let storage_roots = session_storage_roots(&self.config.codex_home);
+        if storage_roots.len() > 1 {
+            return self
+                .list_threads_across_storage_roots(
+                    storage_roots.as_slice(),
+                    requested_page_size,
+                    cursor,
+                    sort_key,
+                    archived,
+                    allowed_sources,
+                    source_kind_filter.as_deref(),
+                    model_provider_filter.as_deref(),
+                    fallback_provider.as_str(),
+                    cwd.as_ref(),
+                    search_term.as_deref(),
+                )
+                .await;
+        }
+
         let mut cursor_obj: Option<RolloutCursor> = match cursor.as_ref() {
             Some(cursor_str) => {
                 Some(parse_cursor(cursor_str).ok_or_else(|| JSONRPCErrorError {
@@ -4616,20 +4685,6 @@ impl CodexMessageProcessor {
         let mut remaining = requested_page_size;
         let mut items = Vec::with_capacity(requested_page_size);
         let mut next_cursor: Option<String> = None;
-
-        let model_provider_filter = match model_providers {
-            Some(providers) => {
-                if providers.is_empty() {
-                    None
-                } else {
-                    Some(providers)
-                }
-            }
-            None => Some(vec![self.config.model_provider_id.clone()]),
-        };
-        let fallback_provider = self.config.model_provider_id.clone();
-        let (allowed_sources_vec, source_kind_filter) = compute_source_filters(source_kinds);
-        let allowed_sources = allowed_sources_vec.as_slice();
         let state_db_ctx = get_state_db(&self.config).await;
 
         while remaining > 0 {
@@ -4725,7 +4780,126 @@ impl CodexMessageProcessor {
         Ok((items, next_cursor))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn list_threads_across_storage_roots(
+        &self,
+        storage_roots: &[PathBuf],
+        requested_page_size: usize,
+        cursor: Option<String>,
+        sort_key: CoreThreadSortKey,
+        archived: bool,
+        allowed_sources: &[codex_protocol::protocol::SessionSource],
+        source_kind_filter: Option<&[ThreadSourceKind]>,
+        model_provider_filter: Option<&[String]>,
+        fallback_provider: &str,
+        cwd: Option<&PathBuf>,
+        search_term: Option<&str>,
+    ) -> Result<(Vec<ConversationSummary>, Option<String>), JSONRPCErrorError> {
+        let start = parse_multi_root_cursor(cursor.as_deref())?;
+        let mut items = Vec::new();
+
+        for root in storage_roots {
+            let mut root_config = self.config.as_ref().clone();
+            root_config.codex_home = root.clone();
+            if root == &self.config.codex_home {
+                root_config.sqlite_home = self.config.sqlite_home.clone();
+            } else {
+                root_config.sqlite_home = root.clone();
+            }
+            root_config.log_dir = root.join("log");
+
+            let state_db_ctx = get_state_db(&root_config).await;
+            let mut cursor_obj: Option<RolloutCursor> = None;
+            let mut last_cursor: Option<RolloutCursor> = None;
+            loop {
+                let page = if archived {
+                    RolloutRecorder::list_archived_threads(
+                        &root_config,
+                        THREAD_LIST_MAX_LIMIT,
+                        cursor_obj.as_ref(),
+                        sort_key,
+                        allowed_sources,
+                        model_provider_filter,
+                        fallback_provider,
+                        search_term,
+                    )
+                    .await
+                } else {
+                    RolloutRecorder::list_threads(
+                        &root_config,
+                        THREAD_LIST_MAX_LIMIT,
+                        cursor_obj.as_ref(),
+                        sort_key,
+                        allowed_sources,
+                        model_provider_filter,
+                        fallback_provider,
+                        search_term,
+                    )
+                    .await
+                }
+                .map_err(|err| JSONRPCErrorError {
+                    code: INTERNAL_ERROR_CODE,
+                    message: format!("failed to list threads: {err}"),
+                    data: None,
+                })?;
+
+                for it in page.items {
+                    let Some(summary) =
+                        summary_from_thread_list_item(it, fallback_provider, state_db_ctx.as_ref())
+                            .await
+                    else {
+                        continue;
+                    };
+                    if source_kind_filter
+                        .is_none_or(|filter| source_kind_matches(&summary.source, filter))
+                        && cwd.is_none_or(|expected_cwd| &summary.cwd == expected_cwd)
+                    {
+                        items.push(summary);
+                    }
+                }
+
+                match page.next_cursor {
+                    Some(next) => {
+                        if last_cursor.as_ref() == Some(&next) {
+                            break;
+                        }
+                        last_cursor = Some(next.clone());
+                        cursor_obj = Some(next);
+                    }
+                    None => break,
+                }
+            }
+        }
+
+        items.sort_by(|a, b| {
+            thread_sort_value(b, sort_key)
+                .cmp(thread_sort_value(a, sort_key))
+                .then_with(|| {
+                    b.conversation_id
+                        .to_string()
+                        .cmp(&a.conversation_id.to_string())
+                })
+        });
+        items.dedup_by(|a, b| a.path == b.path);
+
+        if start > items.len() {
+            return Err(JSONRPCErrorError {
+                code: INVALID_REQUEST_ERROR_CODE,
+                message: format!(
+                    "invalid cursor: start index {start} exceeds {}",
+                    items.len()
+                ),
+                data: None,
+            });
+        }
+
+        let end = start.saturating_add(requested_page_size).min(items.len());
+        let next_cursor = (end < items.len()).then(|| format!("multi:{end}"));
+        Ok((items[start..end].to_vec(), next_cursor))
+    }
+
     async fn list_models(
+        &self,
         outgoing: Arc<OutgoingMessageSender>,
         thread_manager: Arc<ThreadManager>,
         request_id: ConnectionRequestId,
@@ -4735,8 +4909,60 @@ impl CodexMessageProcessor {
             limit,
             cursor,
             include_hidden,
+            model_provider,
         } = params;
-        let models = supported_models(thread_manager, include_hidden.unwrap_or(false)).await;
+        let include_hidden = include_hidden.unwrap_or(false);
+        let models = if let Some(requested_provider_id) = model_provider {
+            let config = match self.load_latest_config(/*fallback_cwd*/ None).await {
+                Ok(config) => config,
+                Err(error) => {
+                    outgoing.send_error(request_id, error).await;
+                    return;
+                }
+            };
+            let provider = if requested_provider_id == "openai" {
+                config
+                    .model_providers
+                    .get("openai")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        codex_models_manager::ModelProviderInfo::create_openai_provider(
+                            /*base_url*/ None,
+                        )
+                    })
+            } else if let Some(provider) =
+                config.model_providers.get(&requested_provider_id).cloned()
+            {
+                provider
+            } else {
+                let error = JSONRPCErrorError {
+                    code: INVALID_REQUEST_ERROR_CODE,
+                    message: format!("unknown model provider: {requested_provider_id}"),
+                    data: None,
+                };
+                outgoing.send_error(request_id, error).await;
+                return;
+            };
+
+            let models_manager = codex_models_manager::manager::ModelsManager::new_with_provider(
+                config.codex_home.clone(),
+                thread_manager.auth_manager(),
+                config.model_catalog.clone(),
+                codex_models_manager::collaboration_mode_presets::CollaborationModesConfig::default(
+                ),
+                requested_provider_id,
+                provider,
+            );
+            models_manager
+                .list_models(codex_models_manager::manager::RefreshStrategy::OnlineIfUncached)
+                .await
+                .into_iter()
+                .filter(|preset| include_hidden || preset.show_in_picker)
+                .map(crate::models::model_from_preset)
+                .collect()
+        } else {
+            supported_models(thread_manager, include_hidden).await
+        };
         let total = models.len();
 
         if total == 0 {
@@ -6895,18 +7121,21 @@ impl CodexMessageProcessor {
         let rollout_path = if let Some(path) = parent_thread.rollout_path() {
             path
         } else {
-            find_thread_path_by_id_str(&self.config.codex_home, &parent_thread_id.to_string())
-                .await
-                .map_err(|err| JSONRPCErrorError {
-                    code: INTERNAL_ERROR_CODE,
-                    message: format!("failed to locate thread id {parent_thread_id}: {err}"),
-                    data: None,
-                })?
-                .ok_or_else(|| JSONRPCErrorError {
-                    code: INVALID_REQUEST_ERROR_CODE,
-                    message: format!("no rollout found for thread id {parent_thread_id}"),
-                    data: None,
-                })?
+            find_thread_path_by_id_str_across_roots(
+                &self.config.codex_home,
+                &parent_thread_id.to_string(),
+            )
+            .await
+            .map_err(|err| JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("failed to locate thread id {parent_thread_id}: {err}"),
+                data: None,
+            })?
+            .ok_or_else(|| JSONRPCErrorError {
+                code: INVALID_REQUEST_ERROR_CODE,
+                message: format!("no rollout found for thread id {parent_thread_id}"),
+                data: None,
+            })?
         };
 
         let mut config = self.config.as_ref().clone();
@@ -7766,7 +7995,7 @@ async fn handle_pending_thread_resume_request(
         has_live_in_progress_turn,
     );
 
-    match find_thread_name_by_id(codex_home, &conversation_id).await {
+    match find_thread_name_by_id_across_roots(codex_home, &conversation_id).await {
         Ok(thread_name) => thread.name = thread_name,
         Err(err) => warn!("Failed to read thread name for {conversation_id}: {err}"),
     }
@@ -8347,6 +8576,36 @@ async fn read_summary_from_state_db_context_by_thread_id(
         Ok(None) | Err(_) => return None,
     };
     Some(summary_from_thread_metadata(&metadata))
+}
+
+fn parse_multi_root_cursor(cursor: Option<&str>) -> Result<usize, JSONRPCErrorError> {
+    match cursor {
+        None => Ok(0),
+        Some(cursor) => cursor
+            .strip_prefix("multi:")
+            .ok_or_else(|| JSONRPCErrorError {
+                code: INVALID_REQUEST_ERROR_CODE,
+                message: format!("invalid cursor: {cursor}"),
+                data: None,
+            })?
+            .parse::<usize>()
+            .map_err(|_| JSONRPCErrorError {
+                code: INVALID_REQUEST_ERROR_CODE,
+                message: format!("invalid cursor: {cursor}"),
+                data: None,
+            }),
+    }
+}
+
+fn thread_sort_value(summary: &ConversationSummary, sort_key: CoreThreadSortKey) -> &str {
+    match sort_key {
+        CoreThreadSortKey::CreatedAt => summary.timestamp.as_deref().unwrap_or_default(),
+        CoreThreadSortKey::UpdatedAt => summary
+            .updated_at
+            .as_deref()
+            .or(summary.timestamp.as_deref())
+            .unwrap_or_default(),
+    }
 }
 
 async fn summary_from_thread_list_item(

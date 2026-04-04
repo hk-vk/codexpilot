@@ -599,8 +599,8 @@ fn load_auth(
     enable_codex_api_key_env: bool,
     auth_credentials_store_mode: AuthCredentialsStoreMode,
 ) -> std::io::Result<Option<CodexAuth>> {
-    let build_auth = |auth_dot_json: AuthDotJson, storage_mode| {
-        CodexAuth::from_auth_dot_json(codex_home, auth_dot_json, storage_mode)
+    let build_auth = |storage_home: &Path, auth_dot_json: AuthDotJson, storage_mode| {
+        CodexAuth::from_auth_dot_json(storage_home, auth_dot_json, storage_mode)
     };
 
     // API key via env var takes precedence over any other auth method.
@@ -615,7 +615,11 @@ fn load_auth(
         AuthCredentialsStoreMode::Ephemeral,
     );
     if let Some(auth_dot_json) = ephemeral_storage.load()? {
-        let auth = build_auth(auth_dot_json, AuthCredentialsStoreMode::Ephemeral)?;
+        let auth = build_auth(
+            codex_home,
+            auth_dot_json,
+            AuthCredentialsStoreMode::Ephemeral,
+        )?;
         return Ok(Some(auth));
     }
 
@@ -626,13 +630,39 @@ fn load_auth(
 
     // Fall back to the configured persistent store (file/keyring/auto) for managed auth.
     let storage = create_auth_storage(codex_home.to_path_buf(), auth_credentials_store_mode);
-    let auth_dot_json = match storage.load()? {
-        Some(auth) => auth,
-        None => return Ok(None),
-    };
+    if let Some(auth_dot_json) = storage.load()? {
+        let auth = build_auth(codex_home, auth_dot_json, auth_credentials_store_mode)?;
+        return Ok(Some(auth));
+    }
 
-    let auth = build_auth(auth_dot_json, auth_credentials_store_mode)?;
-    Ok(Some(auth))
+    if codex_utils_home_dir::current_app_is_codexpilot()
+        && let Ok(upstream_home) = codex_utils_home_dir::find_upstream_codex_home()
+        && upstream_home != codex_home
+    {
+        let upstream_ephemeral_storage =
+            create_auth_storage(upstream_home.clone(), AuthCredentialsStoreMode::Ephemeral);
+        if let Some(auth_dot_json) = upstream_ephemeral_storage.load()? {
+            let auth = build_auth(
+                upstream_home.as_path(),
+                auth_dot_json,
+                AuthCredentialsStoreMode::Ephemeral,
+            )?;
+            return Ok(Some(auth));
+        }
+
+        let upstream_storage =
+            create_auth_storage(upstream_home.clone(), auth_credentials_store_mode);
+        if let Some(auth_dot_json) = upstream_storage.load()? {
+            let auth = build_auth(
+                upstream_home.as_path(),
+                auth_dot_json,
+                auth_credentials_store_mode,
+            )?;
+            return Ok(Some(auth));
+        }
+    }
+
+    Ok(None)
 }
 
 // Persist refreshed tokens into auth storage and update last_refresh.

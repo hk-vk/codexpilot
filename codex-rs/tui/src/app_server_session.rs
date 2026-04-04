@@ -178,6 +178,7 @@ impl AppServerSession {
                     cursor: None,
                     limit: None,
                     include_hidden: Some(true),
+                    model_provider: None,
                 },
             })
             .await
@@ -278,6 +279,32 @@ impl AppServerSession {
             available_models,
             rate_limit_snapshots,
         })
+    }
+
+    pub(crate) async fn list_models(
+        &mut self,
+        model_provider: Option<String>,
+        include_hidden: bool,
+    ) -> Result<Vec<ModelPreset>> {
+        let request_id = self.next_request_id();
+        let models: ModelListResponse = self
+            .client
+            .request_typed(ClientRequest::ModelList {
+                request_id,
+                params: ModelListParams {
+                    cursor: None,
+                    limit: None,
+                    include_hidden: Some(include_hidden),
+                    model_provider,
+                },
+            })
+            .await
+            .wrap_err("model/list failed")?;
+        Ok(models
+            .data
+            .into_iter()
+            .map(model_preset_from_api_model)
+            .collect())
     }
 
     pub(crate) async fn next_event(&mut self) -> Option<AppServerEvent> {

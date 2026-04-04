@@ -19,6 +19,7 @@ use codex_login::collect_auth_env_telemetry;
 use codex_login::default_client::build_reqwest_client;
 use codex_login::required_auth_manager_for_provider;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_model_provider_info::OPENAI_PROVIDER_ID;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::error::CodexErr;
@@ -201,6 +202,7 @@ impl ModelsManager {
             auth_manager,
             model_catalog,
             collaboration_modes_config,
+            OPENAI_PROVIDER_ID.to_string(),
             ModelProviderInfo::create_openai_provider(/*base_url*/ None),
         )
     }
@@ -211,11 +213,13 @@ impl ModelsManager {
         auth_manager: Arc<AuthManager>,
         model_catalog: Option<ModelsResponse>,
         collaboration_modes_config: CollaborationModesConfig,
+        provider_id: String,
         provider: ModelProviderInfo,
     ) -> Self {
         let auth_manager = required_auth_manager_for_provider(auth_manager, &provider);
         let cache_path = codex_home.join(MODEL_CACHE_FILE);
-        let cache_manager = ModelsCacheManager::new(cache_path, DEFAULT_MODEL_CACHE_TTL);
+        let cache_manager =
+            ModelsCacheManager::new(cache_path, DEFAULT_MODEL_CACHE_TTL, provider_id);
         let catalog_mode = if model_catalog.is_some() {
             CatalogMode::Custom
         } else {
@@ -547,6 +551,7 @@ impl ModelsManager {
             auth_manager,
             /*model_catalog*/ None,
             CollaborationModesConfig::default(),
+            OPENAI_PROVIDER_ID.to_string(),
             provider,
         )
     }

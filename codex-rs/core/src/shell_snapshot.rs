@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
-use crate::rollout::list::find_thread_path_by_id_str;
+use crate::rollout::find_thread_path_by_id_str_across_roots;
 use crate::shell::Shell;
 use crate::shell::ShellType;
 use crate::shell::get_shell;
@@ -518,7 +518,7 @@ pub async fn cleanup_stale_snapshots(codex_home: &Path, active_session_id: Threa
             continue;
         }
 
-        let rollout_path = find_thread_path_by_id_str(codex_home, session_id).await?;
+        let rollout_path = find_thread_path_by_id_str_across_roots(codex_home, session_id).await?;
         let Some(rollout_path) = rollout_path else {
             remove_snapshot_file(&path).await;
             continue;

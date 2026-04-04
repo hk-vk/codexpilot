@@ -186,7 +186,38 @@ pub async fn load_config_layers_state(
     // exists, but is malformed, then this error should be propagated to the
     // user.
     let user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home)?;
-    let user_layer = load_config_toml_for_required_layer(&user_file, |config_toml| {
+    let mut upstream_user_config = TomlValue::Table(toml::map::Map::new());
+    if codex_utils_home_dir::current_app_is_codexpilot()
+        && let Ok(upstream_home) = codex_utils_home_dir::find_upstream_codex_home()
+        && upstream_home != codex_home
+    {
+        let upstream_user_file =
+            AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, &upstream_home)?;
+        if let Some(mut config_toml) =
+            layer_io::read_config_from_path(&upstream_user_file, false).await?
+        {
+            strip_codexpilot_upstream_user_config_keys(&mut config_toml);
+            let upstream_parent = upstream_user_file.parent().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Config file {} has no parent directory",
+                        upstream_user_file.display()
+                    ),
+                )
+            })?;
+            upstream_user_config =
+                resolve_relative_paths_in_config_toml(config_toml, upstream_parent.as_path())?;
+        }
+    }
+    let user_layer = load_config_toml_for_required_layer(&user_file, |mut config_toml| {
+        if let TomlValue::Table(table) = &upstream_user_config
+            && !table.is_empty()
+        {
+            let mut merged = upstream_user_config.clone();
+            merge_toml_values(&mut merged, &config_toml);
+            config_toml = merged;
+        }
         ConfigLayerEntry::new(
             ConfigLayerSource::User {
                 file: user_file.clone(),
@@ -317,6 +348,14 @@ pub async fn load_config_layers_state(
 ///   returns the resulting layer entry.
 /// - If there is an error reading the file or parsing the TOML, returns an
 ///   error.
+fn strip_codexpilot_upstream_user_config_keys(config_toml: &mut TomlValue) {
+    let TomlValue::Table(table) = config_toml else {
+        return;
+    };
+
+    table.remove("mcp_servers");
+}
+
 async fn load_config_toml_for_required_layer(
     config_toml: impl AsRef<Path>,
     create_entry: impl FnOnce(TomlValue) -> ConfigLayerEntry,

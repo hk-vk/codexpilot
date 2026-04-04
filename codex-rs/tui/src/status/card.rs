@@ -2,7 +2,7 @@ use crate::history_cell::CompositeHistoryCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::with_border_with_inner_width;
-use crate::version::CODEX_CLI_VERSION;
+use crate::version::display_cli_version;
 use chrono::DateTime;
 use chrono::Local;
 use codex_core::config::Config;
@@ -530,9 +530,9 @@ impl HistoryCell for StatusHistoryCell {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(vec![
             Span::from(format!("{}>_ ", FieldFormatter::INDENT)).dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from(codex_utils_home_dir::current_app_display_name()).bold(),
             Span::from(" ").dim(),
-            Span::from(format!("(v{CODEX_CLI_VERSION})")).dim(),
+            Span::from(format!("(v{})", display_cli_version())).dim(),
         ]));
         lines.push(Line::from(Vec::<Span<'static>>::new()));
 

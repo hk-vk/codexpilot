@@ -51,7 +51,7 @@ use crate::test_support::PathBufExt;
 use crate::tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
-use crate::version::CODEX_CLI_VERSION;
+use crate::version::display_cli_version;
 use codex_ansi_escape::ansi_escape_line;
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_client::TypedRequestError;
@@ -1488,7 +1488,7 @@ impl App {
     }
 
     fn clear_ui_header_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.clear_ui_header_lines_with_version(width, CODEX_CLI_VERSION)
+        self.clear_ui_header_lines_with_version(width, display_cli_version())
     }
 
     fn queue_clear_ui_header(&mut self, tui: &mut tui::Tui) {
@@ -2896,6 +2896,26 @@ impl App {
             initial_selected_idx,
             ..Default::default()
         });
+    }
+
+    async fn open_model_provider_picker(
+        &mut self,
+        app_server: &mut AppServerSession,
+        provider_id: String,
+    ) {
+        match app_server
+            .list_models(Some(provider_id.clone()), /*include_hidden*/ true)
+            .await
+        {
+            Ok(models) => {
+                self.chat_widget
+                    .open_model_popup_with_presets_for_provider(models, Some(&provider_id));
+            }
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to load {provider_id} models: {err}"));
+            }
+        }
     }
 
     fn is_terminal_thread_read_error(err: &color_eyre::Report) -> bool {
@@ -4535,7 +4555,8 @@ impl App {
                     .open_all_models_popup_for_provider(models, provider_id.as_deref());
             }
             AppEvent::OpenModelProviderPicker { provider_id } => {
-                self.chat_widget.open_models_for_provider(&provider_id);
+                self.open_model_provider_picker(app_server, provider_id)
+                    .await;
             }
             AppEvent::OpenFullAccessConfirmation {
                 preset,
