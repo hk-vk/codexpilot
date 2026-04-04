@@ -4647,7 +4647,7 @@ impl CodexMessageProcessor {
                     Some(providers)
                 }
             }
-            None => Some(vec![self.config.model_provider_id.clone()]),
+            None => None,
         };
         let fallback_provider = self.config.model_provider_id.clone();
         let (allowed_sources_vec, source_kind_filter) = compute_source_filters(source_kinds);

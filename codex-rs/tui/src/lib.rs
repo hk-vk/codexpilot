@@ -569,11 +569,27 @@ fn latest_session_lookup_params(
     cwd_filter: Option<&Path>,
     include_non_interactive: bool,
 ) -> ThreadListParams {
+    latest_session_lookup_params_for_app(
+        is_remote,
+        codex_utils_home_dir::current_app_is_codexpilot(),
+        config,
+        cwd_filter,
+        include_non_interactive,
+    )
+}
+
+fn latest_session_lookup_params_for_app(
+    is_remote: bool,
+    current_app_is_codexpilot: bool,
+    config: &Config,
+    cwd_filter: Option<&Path>,
+    include_non_interactive: bool,
+) -> ThreadListParams {
     ThreadListParams {
         cursor: None,
         limit: Some(1),
         sort_key: Some(AppServerThreadSortKey::UpdatedAt),
-        model_providers: if is_remote {
+        model_providers: if is_remote || current_app_is_codexpilot {
             None
         } else {
             Some(vec![config.model_provider_id.clone()])
@@ -1897,8 +1913,9 @@ mod tests {
         let config = build_config(&temp_dir).await?;
         let cwd = temp_dir.path().join("project");
 
-        let params = latest_session_lookup_params(
+        let params = latest_session_lookup_params_for_app(
             /*is_remote*/ false,
+            /*current_app_is_codexpilot*/ false,
             &config,
             Some(cwd.as_path()),
             /*include_non_interactive*/ false,
@@ -1916,8 +1933,9 @@ mod tests {
         let config = build_config(&temp_dir).await?;
         let cwd = temp_dir.path().join("project");
 
-        let params = latest_session_lookup_params(
+        let params = latest_session_lookup_params_for_app(
             /*is_remote*/ true,
+            /*current_app_is_codexpilot*/ false,
             &config,
             Some(cwd.as_path()),
             /*include_non_interactive*/ false,
@@ -1925,6 +1943,26 @@ mod tests {
 
         assert_eq!(params.model_providers, None);
         assert_eq!(params.cwd, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn latest_session_lookup_params_omit_provider_filter_for_codexpilot()
+    -> std::io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = build_config(&temp_dir).await?;
+        let cwd = temp_dir.path().join("project");
+
+        let params = latest_session_lookup_params_for_app(
+            /*is_remote*/ false,
+            /*current_app_is_codexpilot*/ true,
+            &config,
+            Some(cwd.as_path()),
+            /*include_non_interactive*/ false,
+        );
+
+        assert_eq!(params.model_providers, None);
+        assert_eq!(params.cwd, Some(cwd.to_string_lossy().to_string()));
         Ok(())
     }
 

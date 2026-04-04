@@ -114,6 +114,18 @@ enum ProviderFilter {
     MatchDefault(String),
 }
 
+fn provider_filter_for_picker(
+    is_remote: bool,
+    current_app_is_codexpilot: bool,
+    default_provider: &str,
+) -> ProviderFilter {
+    if is_remote || current_app_is_codexpilot {
+        ProviderFilter::Any
+    } else {
+        ProviderFilter::MatchDefault(default_provider.to_string())
+    }
+}
+
 type PageLoader = Arc<dyn Fn(PageLoadRequest) + Send + Sync>;
 
 enum BackgroundEvent {
@@ -234,11 +246,11 @@ async fn run_session_picker_with_loader(
     bg_rx: mpsc::UnboundedReceiver<BackgroundEvent>,
 ) -> Result<SessionSelection> {
     let alt = AltScreenGuard::enter(tui);
-    let provider_filter = if is_remote {
-        ProviderFilter::Any
-    } else {
-        ProviderFilter::MatchDefault(config.model_provider_id.to_string())
-    };
+    let provider_filter = provider_filter_for_picker(
+        is_remote,
+        codex_utils_home_dir::current_app_is_codexpilot(),
+        config.model_provider_id.as_str(),
+    );
     let codex_home = config.codex_home.as_path();
     let filter_cwd = if show_all || is_remote {
         // Remote sessions live in the server's filesystem namespace, so the client
@@ -1830,6 +1842,16 @@ mod tests {
         };
 
         assert_eq!(row.display_preview(), "My session");
+    }
+
+    #[test]
+    fn provider_filter_for_picker_uses_any_for_codexpilot() {
+        let filter = provider_filter_for_picker(
+            /*is_remote*/ false,
+            /*current_app_is_codexpilot*/ true,
+            "github-copilot",
+        );
+        assert!(matches!(filter, ProviderFilter::Any));
     }
 
     #[test]
