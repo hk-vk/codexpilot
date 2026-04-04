@@ -476,7 +476,7 @@ pub async fn run_login_with_github_copilot(
                 std::process::exit(1);
             }
             if write_config {
-                eprintln!("Ensured GitHub Copilot provider config in ~/.codex/config.toml");
+                eprintln!("Ensured GitHub Copilot provider config in the app config.toml");
             }
             eprintln!("Successfully logged in with GitHub Copilot");
             std::process::exit(0);

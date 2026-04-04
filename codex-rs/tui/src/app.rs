@@ -936,6 +936,7 @@ async fn handle_model_migration_prompt_if_needed(
 
 pub(crate) struct App {
     model_catalog: Arc<ModelCatalog>,
+    provider_model_presets: HashMap<String, Vec<ModelPreset>>,
     pub(crate) session_telemetry: SessionTelemetry,
     pub(crate) app_event_tx: AppEventSender,
     pub(crate) chat_widget: ChatWidget,
@@ -2903,11 +2904,19 @@ impl App {
         app_server: &mut AppServerSession,
         provider_id: String,
     ) {
+        if let Some(models) = self.provider_model_presets.get(&provider_id).cloned() {
+            self.chat_widget
+                .open_model_popup_with_presets_for_provider(models, Some(&provider_id));
+            return;
+        }
+
         match app_server
             .list_models(Some(provider_id.clone()), /*include_hidden*/ true)
             .await
         {
             Ok(models) => {
+                self.provider_model_presets
+                    .insert(provider_id.clone(), models.clone());
                 self.chat_widget
                     .open_model_popup_with_presets_for_provider(models, Some(&provider_id));
             }
@@ -3624,6 +3633,8 @@ impl App {
                     .enabled(Feature::DefaultModeRequestUserInput),
             },
         ));
+        let provider_model_presets =
+            HashMap::from([(config.model_provider_id.clone(), available_models.clone())]);
         let feedback_audience = bootstrap.feedback_audience;
         let auth_mode = bootstrap.auth_mode;
         let has_chatgpt_account = bootstrap.has_chatgpt_account;
@@ -3775,6 +3786,7 @@ impl App {
 
         let mut app = Self {
             model_catalog,
+            provider_model_presets,
             session_telemetry: session_telemetry.clone(),
             app_event_tx,
             chat_widget,
