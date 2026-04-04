@@ -117,20 +117,51 @@ impl McpProcess {
         Self::new_with_env_and_args(codex_home, env_overrides, &[]).await
     }
 
+    pub async fn new_codexpilot_with_env(
+        codexpilot_home: &Path,
+        env_overrides: &[(&str, Option<&str>)],
+    ) -> anyhow::Result<Self> {
+        Self::new_for_binary(
+            "codexpilot",
+            "CODEXPILOT_HOME",
+            codexpilot_home,
+            env_overrides,
+            &["app-server"],
+        )
+        .await
+    }
+
     async fn new_with_env_and_args(
         codex_home: &Path,
         env_overrides: &[(&str, Option<&str>)],
         args: &[&str],
     ) -> anyhow::Result<Self> {
-        let program = codex_utils_cargo_bin::cargo_bin("codex-app-server")
-            .context("should find binary for codex-app-server")?;
+        Self::new_for_binary(
+            "codex-app-server",
+            "CODEX_HOME",
+            codex_home,
+            env_overrides,
+            args,
+        )
+        .await
+    }
+
+    async fn new_for_binary(
+        program_name: &str,
+        home_env_var: &str,
+        app_home: &Path,
+        env_overrides: &[(&str, Option<&str>)],
+        args: &[&str],
+    ) -> anyhow::Result<Self> {
+        let program = codex_utils_cargo_bin::cargo_bin(program_name)
+            .with_context(|| format!("should find binary for {program_name}"))?;
         let mut cmd = Command::new(program);
 
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
-        cmd.current_dir(codex_home);
-        cmd.env("CODEX_HOME", codex_home);
+        cmd.current_dir(app_home);
+        cmd.env(home_env_var, app_home);
         cmd.env("RUST_LOG", "info");
         cmd.env_remove(CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR);
         cmd.args(args);
@@ -149,7 +180,7 @@ impl McpProcess {
         let mut process = cmd
             .kill_on_drop(true)
             .spawn()
-            .context("codex-mcp-server proc should start")?;
+            .with_context(|| format!("{program_name} proc should start"))?;
         let stdin = process
             .stdin
             .take()

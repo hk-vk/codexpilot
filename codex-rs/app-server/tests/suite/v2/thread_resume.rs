@@ -10,6 +10,7 @@ use app_test_support::create_shell_command_sse_response;
 use app_test_support::rollout_path;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
+use app_test_support::write_mock_responses_config_toml;
 use chrono::Utc;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
@@ -25,6 +26,7 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadMetadataGitInfoUpdateParams;
 use codex_app_server_protocol::ThreadMetadataUpdateParams;
 use codex_app_server_protocol::ThreadReadParams;
@@ -38,6 +40,7 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
+use codex_features::Feature;
 use codex_login::AuthCredentialsStoreMode;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_protocol::ThreadId;
@@ -57,6 +60,7 @@ use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::fs::FileTimes;
 use std::path::Path;
 use std::path::PathBuf;
@@ -1859,6 +1863,154 @@ async fn thread_resume_accepts_personality_override() -> Result<()> {
         instructions_text.contains(CODEX_5_2_INSTRUCTIONS_TEMPLATE_DEFAULT),
         "expected default base instructions from history, got {instructions_text:?}"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn codexpilot_resume_lists_upstream_threads_and_writes_back_to_upstream_root() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let home_root = TempDir::new()?;
+    let codexpilot_home = home_root.path().join(".codexpilot");
+    let upstream_codex_home = home_root.path().join(".codex");
+    std::fs::create_dir_all(&codexpilot_home)?;
+    std::fs::create_dir_all(&upstream_codex_home)?;
+
+    let feature_flags = BTreeMap::<Feature, bool>::new();
+    write_mock_responses_config_toml(
+        &codexpilot_home,
+        &server.uri(),
+        &feature_flags,
+        /*auto_compact_limit*/ 4096,
+        /*requires_openai_auth*/ Some(false),
+        "github-copilot",
+        "summarize compactly",
+    )?;
+    write_mock_responses_config_toml(
+        &upstream_codex_home,
+        &server.uri(),
+        &feature_flags,
+        /*auto_compact_limit*/ 4096,
+        /*requires_openai_auth*/ Some(false),
+        "upstream-provider",
+        "summarize compactly",
+    )?;
+
+    let local_thread_id = create_fake_rollout_with_text_elements(
+        &codexpilot_home,
+        "2025-01-05T12-00-00",
+        "2025-01-05T12:00:00Z",
+        "local codexpilot session",
+        Vec::new(),
+        Some("github-copilot"),
+        /*git_info*/ None,
+    )?;
+    let upstream_thread_id = create_fake_rollout_with_text_elements(
+        &upstream_codex_home,
+        "2025-01-06T12-00-00",
+        "2025-01-06T12:00:00Z",
+        "upstream codex session",
+        Vec::new(),
+        Some("upstream-provider"),
+        /*git_info*/ None,
+    )?;
+    let upstream_rollout_file = rollout_path(
+        &upstream_codex_home,
+        "2025-01-06T12-00-00",
+        &upstream_thread_id,
+    );
+    let before_modified = std::fs::metadata(&upstream_rollout_file)?.modified()?;
+
+    let home_root_str = home_root.path().to_string_lossy().to_string();
+    let upstream_home_str = upstream_codex_home.to_string_lossy().to_string();
+    let mut mcp = McpProcess::new_codexpilot_with_env(
+        &codexpilot_home,
+        &[
+            ("HOME", Some(home_root_str.as_str())),
+            ("CODEX_HOME", Some(upstream_home_str.as_str())),
+        ],
+    )
+    .await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let list_id = mcp
+        .send_thread_list_request(codex_app_server_protocol::ThreadListParams {
+            cursor: None,
+            limit: Some(20),
+            sort_key: None,
+            model_providers: None,
+            source_kinds: None,
+            archived: Some(false),
+            cwd: None,
+            search_term: None,
+        })
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let ThreadListResponse { data, .. } = to_response::<ThreadListResponse>(list_resp)?;
+    let listed_ids = data
+        .iter()
+        .map(|thread| thread.id.clone())
+        .collect::<Vec<_>>();
+    assert!(listed_ids.contains(&local_thread_id));
+    assert!(listed_ids.contains(&upstream_thread_id));
+    let upstream_thread = data
+        .iter()
+        .find(|thread| thread.id == upstream_thread_id)
+        .expect("upstream thread should be listed");
+    assert_eq!(upstream_thread.model_provider, "upstream-provider");
+
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: upstream_thread_id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
+    assert_eq!(thread.id, upstream_thread_id);
+    assert_eq!(thread.model_provider, "upstream-provider");
+    assert!(
+        thread
+            .path
+            .as_ref()
+            .is_some_and(|path| path.starts_with(&upstream_codex_home)),
+        "resumed upstream thread should keep its upstream rollout path: {:?}",
+        thread.path
+    );
+
+    let turn_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id,
+            input: vec![UserInput::Text {
+                text: "writeback marker".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let after_modified = std::fs::metadata(&upstream_rollout_file)?.modified()?;
+    assert!(after_modified > before_modified);
+    let upstream_contents = std::fs::read_to_string(&upstream_rollout_file)?;
+    assert!(upstream_contents.contains("writeback marker"));
 
     Ok(())
 }

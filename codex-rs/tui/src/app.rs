@@ -7884,6 +7884,7 @@ mod tests {
                 approvals_reviewer: Some(guardian_approvals.approvals_reviewer),
                 sandbox_policy: Some(guardian_approvals.sandbox_policy.clone()),
                 windows_sandbox_level: None,
+                model_provider: None,
                 model: None,
                 effort: None,
                 summary: None,
@@ -7975,6 +7976,7 @@ mod tests {
                 approvals_reviewer: Some(ApprovalsReviewer::User),
                 sandbox_policy: None,
                 windows_sandbox_level: None,
+                model_provider: None,
                 model: None,
                 effort: None,
                 summary: None,
@@ -8054,6 +8056,7 @@ mod tests {
                 approvals_reviewer: Some(guardian_approvals.approvals_reviewer),
                 sandbox_policy: Some(guardian_approvals.sandbox_policy.clone()),
                 windows_sandbox_level: None,
+                model_provider: None,
                 model: None,
                 effort: None,
                 summary: None,
@@ -8111,6 +8114,7 @@ mod tests {
                 approvals_reviewer: Some(ApprovalsReviewer::User),
                 sandbox_policy: None,
                 windows_sandbox_level: None,
+                model_provider: None,
                 model: None,
                 effort: None,
                 summary: None,
@@ -8170,6 +8174,7 @@ mod tests {
                 approvals_reviewer: Some(guardian_approvals.approvals_reviewer),
                 sandbox_policy: Some(guardian_approvals.sandbox_policy.clone()),
                 windows_sandbox_level: None,
+                model_provider: None,
                 model: None,
                 effort: None,
                 summary: None,
@@ -8257,6 +8262,7 @@ guardian_approval = true
                 approvals_reviewer: Some(ApprovalsReviewer::User),
                 sandbox_policy: None,
                 windows_sandbox_level: None,
+                model_provider: None,
                 model: None,
                 effort: None,
                 summary: None,
@@ -9180,6 +9186,7 @@ guardian_approval = true
 
         App {
             model_catalog: chat_widget.model_catalog(),
+            provider_model_presets: HashMap::new(),
             session_telemetry,
             app_event_tx,
             chat_widget,
@@ -9234,6 +9241,7 @@ guardian_approval = true
         (
             App {
                 model_catalog: chat_widget.model_catalog(),
+                provider_model_presets: HashMap::new(),
                 session_telemetry,
                 app_event_tx,
                 chat_widget,

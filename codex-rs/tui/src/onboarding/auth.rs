@@ -1198,6 +1198,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn existing_github_copilot_login_status_counts_as_signed_in() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.login_status.github_copilot_authenticated = true;
+
+        let handled = widget.handle_existing_github_copilot_login();
+
+        assert_eq!(handled, true);
+        assert!(matches!(
+            &*widget.sign_in_state.read().unwrap(),
+            SignInState::GitHubCopilotSuccess
+        ));
+    }
+
+    #[tokio::test]
+    async fn github_copilot_auth_file_counts_as_signed_in() {
+        let (widget, _tmp) = widget_forced_chatgpt().await;
+        let auth = codex_login::github_copilot_storage::GitHubCopilotAuth::new(
+            "gho_test".to_string(),
+            "copilot_test".to_string(),
+            chrono::Utc::now() + chrono::TimeDelta::hours(1),
+            "https://api.githubcopilot.com".to_string(),
+            None,
+        );
+        codex_login::github_copilot_storage::save_github_copilot_auth(&widget.codex_home, &auth)
+            .expect("copilot auth should save");
+
+        assert!(widget.has_github_copilot_login());
+    }
+
+    #[tokio::test]
     async fn cancel_active_attempt_resets_browser_login_state() {
         let (widget, _tmp) = widget_forced_chatgpt().await;
         *widget.error.write().unwrap() = Some("still logging in".to_string());

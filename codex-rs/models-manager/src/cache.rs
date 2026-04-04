@@ -236,3 +236,25 @@ impl ModelsCache {
         age <= ttl_duration
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::cache_provider_matches;
+    use super::cache_version_matches;
+
+    #[test]
+    fn cache_version_matches_accepts_exact_and_legacy_placeholder_versions() {
+        assert!(cache_version_matches(Some("0.118.0"), "0.118.0"));
+        assert!(cache_version_matches(Some("0.0.0"), "0.118.0"));
+        assert!(!cache_version_matches(Some("0.117.0"), "0.118.0"));
+        assert!(!cache_version_matches(None, "0.118.0"));
+    }
+
+    #[test]
+    fn cache_provider_matches_treats_providerless_cache_as_openai_only() {
+        assert!(cache_provider_matches(Some("openai"), "openai"));
+        assert!(cache_provider_matches(None, "openai"));
+        assert!(!cache_provider_matches(None, "github-copilot"));
+        assert!(!cache_provider_matches(Some("openai"), "github-copilot"));
+    }
+}

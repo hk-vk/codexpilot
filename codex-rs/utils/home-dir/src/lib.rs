@@ -40,7 +40,11 @@ impl AppHome {
 }
 
 pub fn current_app_home() -> AppHome {
-    if current_exe_name().is_some_and(|name| name.starts_with("codexpilot")) {
+    app_home_for_exe_name(current_exe_name().as_deref())
+}
+
+fn app_home_for_exe_name(exe_name: Option<&str>) -> AppHome {
+    if exe_name.is_some_and(|name| name.starts_with("codexpilot")) {
         AppHome::CodexPilot
     } else {
         AppHome::Codex
@@ -152,12 +156,31 @@ fn find_home_from_env(codex_home_env: Option<&str>, app_home: AppHome) -> std::i
 #[cfg(test)]
 mod tests {
     use super::AppHome;
+    use super::app_home_for_exe_name;
     use super::find_home_from_env;
     use dirs::home_dir;
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::io::ErrorKind;
     use tempfile::TempDir;
+
+    #[test]
+    fn codexpilot_executable_name_selects_codexpilot_home() {
+        assert_eq!(
+            app_home_for_exe_name(Some("codexpilot")),
+            AppHome::CodexPilot
+        );
+        assert_eq!(
+            app_home_for_exe_name(Some("codexpilot-dev")),
+            AppHome::CodexPilot
+        );
+        assert_eq!(app_home_for_exe_name(Some("codex")), AppHome::Codex);
+        assert_eq!(
+            app_home_for_exe_name(Some("codex-app-server")),
+            AppHome::Codex
+        );
+        assert_eq!(app_home_for_exe_name(None), AppHome::Codex);
+    }
 
     #[test]
     fn find_codex_home_env_missing_path_is_fatal() {

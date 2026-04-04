@@ -4639,16 +4639,7 @@ impl CodexMessageProcessor {
             cwd,
             search_term,
         } = filters;
-        let model_provider_filter = match model_providers {
-            Some(providers) => {
-                if providers.is_empty() {
-                    None
-                } else {
-                    Some(providers)
-                }
-            }
-            None => None,
-        };
+        let model_provider_filter = normalize_model_provider_filter(model_providers);
         let fallback_provider = self.config.model_provider_id.clone();
         let (allowed_sources_vec, source_kind_filter) = compute_source_filters(source_kinds);
         let allowed_sources = allowed_sources_vec.as_slice();
@@ -8578,6 +8569,14 @@ async fn read_summary_from_state_db_context_by_thread_id(
     Some(summary_from_thread_metadata(&metadata))
 }
 
+fn normalize_model_provider_filter(model_providers: Option<Vec<String>>) -> Option<Vec<String>> {
+    match model_providers {
+        Some(providers) if providers.is_empty() => None,
+        Some(providers) => Some(providers),
+        None => None,
+    }
+}
+
 fn parse_multi_root_cursor(cursor: Option<&str>) -> Result<usize, JSONRPCErrorError> {
     match cursor {
         None => Ok(0),
@@ -9074,6 +9073,16 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[test]
+    fn normalize_model_provider_filter_leaves_absent_filters_unset() {
+        assert_eq!(normalize_model_provider_filter(None), None);
+        assert_eq!(normalize_model_provider_filter(Some(vec![])), None);
+        assert_eq!(
+            normalize_model_provider_filter(Some(vec!["github-copilot".to_string()])),
+            Some(vec!["github-copilot".to_string()])
+        );
+    }
 
     #[test]
     fn validate_dynamic_tools_rejects_unsupported_input_schema() {

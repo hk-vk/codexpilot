@@ -19,10 +19,6 @@ pub fn display_cli_version() -> &'static str {
 }
 
 fn resolve_display_cli_version() -> String {
-    if CODEX_CLI_VERSION != "0.0.0" {
-        return CODEX_CLI_VERSION.to_string();
-    }
-
     let current_home = codex_core::config::find_codex_home().ok();
     let upstream_home = codex_utils_home_dir::find_upstream_codex_home().ok();
     let mut candidates = Vec::new();
@@ -38,6 +34,17 @@ fn resolve_display_cli_version() -> String {
         }
     }
 
+    resolve_display_cli_version_from_candidates(CODEX_CLI_VERSION, &candidates)
+}
+
+fn resolve_display_cli_version_from_candidates(
+    embedded_version: &str,
+    candidates: &[std::path::PathBuf],
+) -> String {
+    if embedded_version != "0.0.0" {
+        return embedded_version.to_string();
+    }
+
     for home in candidates {
         let version_file = home.join(VERSION_FILENAME);
         if let Ok(contents) = std::fs::read_to_string(version_file)
@@ -48,5 +55,64 @@ fn resolve_display_cli_version() -> String {
         }
     }
 
-    CODEX_CLI_VERSION.to_string()
+    embedded_version.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_display_cli_version_from_candidates;
+    use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[test]
+    fn embedded_non_placeholder_version_wins() {
+        let dir = TempDir::new().expect("tempdir");
+        std::fs::write(
+            dir.path().join("version.json"),
+            r#"{"latest_version":"0.118.0"}"#,
+        )
+        .expect("write version file");
+
+        assert_eq!(
+            resolve_display_cli_version_from_candidates("0.200.0", &[dir.path().to_path_buf()]),
+            "0.200.0"
+        );
+    }
+
+    #[test]
+    fn placeholder_version_uses_first_non_empty_version_file() {
+        let current_home = TempDir::new().expect("tempdir");
+        let upstream_home = TempDir::new().expect("tempdir");
+        std::fs::write(
+            current_home.path().join("version.json"),
+            r#"{"latest_version":""}"#,
+        )
+        .expect("write empty version file");
+        std::fs::write(
+            upstream_home.path().join("version.json"),
+            r#"{"latest_version":"0.118.0"}"#,
+        )
+        .expect("write upstream version file");
+
+        assert_eq!(
+            resolve_display_cli_version_from_candidates(
+                "0.0.0",
+                &[
+                    current_home.path().to_path_buf(),
+                    upstream_home.path().to_path_buf(),
+                ],
+            ),
+            "0.118.0"
+        );
+    }
+
+    #[test]
+    fn placeholder_version_falls_back_when_no_candidate_file_matches() {
+        let missing = PathBuf::from("/tmp/definitely-missing-codexpilot-version-home");
+        assert_eq!(
+            resolve_display_cli_version_from_candidates("0.0.0", &[missing]),
+            "0.0.0"
+        );
+    }
 }
