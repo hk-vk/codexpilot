@@ -165,6 +165,7 @@ pub use client::ModelClientSession;
 pub use client::X_CODEX_TURN_METADATA_HEADER;
 pub use client_common::Prompt;
 pub use client_common::REVIEW_PROMPT;
+pub use client_common::RequestInitiator;
 pub use client_common::ResponseEvent;
 pub use client_common::ResponseStream;
 pub use compact::content_items_to_text;

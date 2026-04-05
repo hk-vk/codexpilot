@@ -262,11 +262,11 @@ impl AuthModeWidget {
     }
 
     fn displayed_sign_in_options(&self) -> Vec<SignInOption> {
-        let mut options = vec![SignInOption::ChatGpt];
+        let mut options = vec![SignInOption::GitHubCopilot];
         if self.is_chatgpt_login_allowed() {
+            options.push(SignInOption::ChatGpt);
             options.push(SignInOption::DeviceCode);
         }
-        options.push(SignInOption::GitHubCopilot);
         if self.is_api_login_allowed() {
             options.push(SignInOption::ApiKey);
         }
@@ -274,12 +274,11 @@ impl AuthModeWidget {
     }
 
     fn selectable_sign_in_options(&self) -> Vec<SignInOption> {
-        let mut options = Vec::new();
+        let mut options = vec![SignInOption::GitHubCopilot];
         if self.is_chatgpt_login_allowed() {
             options.push(SignInOption::ChatGpt);
             options.push(SignInOption::DeviceCode);
         }
-        options.push(SignInOption::GitHubCopilot);
         if self.is_api_login_allowed() {
             options.push(SignInOption::ApiKey);
         }
@@ -1209,6 +1208,20 @@ mod tests {
             &*widget.sign_in_state.read().unwrap(),
             SignInState::GitHubCopilotSuccess
         ));
+    }
+
+    #[tokio::test]
+    async fn github_copilot_is_first_sign_in_option() {
+        let (widget, _tmp) = widget_forced_chatgpt().await;
+
+        assert_eq!(
+            widget.displayed_sign_in_options().first(),
+            Some(&SignInOption::GitHubCopilot)
+        );
+        assert_eq!(
+            widget.selectable_sign_in_options().first(),
+            Some(&SignInOption::GitHubCopilot)
+        );
     }
 
     #[tokio::test]

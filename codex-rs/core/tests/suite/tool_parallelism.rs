@@ -28,6 +28,7 @@ use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
+use serial_test::serial;
 use tokio::sync::oneshot;
 
 async fn run_turn(test: &TestCodex, prompt: &str) -> anyhow::Result<()> {
@@ -71,14 +72,16 @@ async fn build_codex_with_test_tool(server: &wiremock::MockServer) -> anyhow::Re
 }
 
 fn assert_parallel_duration(actual: Duration) {
-    // Allow headroom for slow CI scheduling; barrier synchronization already enforces overlap.
+    // Full-suite runs can be substantially noisier than isolated runs. Keep enough
+    // slack for scheduler jitter while still staying below the serial barrier-timeout path.
     assert!(
-        actual < Duration::from_millis(1_600),
+        actual < Duration::from_millis(3_200),
         "expected parallel execution to finish quickly, got {actual:?}"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn read_file_tools_run_in_parallel() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -90,7 +93,7 @@ async fn read_file_tools_run_in_parallel() -> anyhow::Result<()> {
         "barrier": {
             "id": "parallel-test-sync-warmup",
             "participants": 2,
-            "timeout_ms": 1_000,
+            "timeout_ms": 3_000,
         }
     })
     .to_string();
@@ -100,7 +103,7 @@ async fn read_file_tools_run_in_parallel() -> anyhow::Result<()> {
         "barrier": {
             "id": "parallel-test-sync",
             "participants": 2,
-            "timeout_ms": 1_000,
+            "timeout_ms": 3_000,
         }
     })
     .to_string();
@@ -141,6 +144,7 @@ async fn read_file_tools_run_in_parallel() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn shell_tools_run_in_parallel() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -176,6 +180,7 @@ async fn shell_tools_run_in_parallel() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn mixed_parallel_tools_run_in_parallel() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 

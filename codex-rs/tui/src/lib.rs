@@ -1015,8 +1015,8 @@ async fn run_ratatui_app(
 
     let should_show_trust_screen_flag = !remote_mode && should_show_trust_screen(&initial_config);
     let mut trust_decision_was_made = false;
-    let needs_onboarding_app_server =
-        should_show_trust_screen_flag || initial_config.model_provider.requires_openai_auth;
+    let needs_onboarding_app_server = should_show_trust_screen_flag
+        || provider_supports_interactive_onboarding_login(&initial_config);
     let mut onboarding_app_server = if needs_onboarding_app_server {
         Some(AppServerSession::new(
             start_app_server(
@@ -1765,7 +1765,15 @@ fn should_show_onboarding(
     should_show_login_screen(login_status, config)
 }
 
+fn provider_supports_interactive_onboarding_login(config: &Config) -> bool {
+    config.model_provider.requires_openai_auth || config.model_provider_id == "github-copilot"
+}
+
 fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool {
+    if config.model_provider_id == "github-copilot" {
+        return !login_status.github_copilot_authenticated;
+    }
+
     // Only show the login screen for providers that actually require OpenAI auth
     // (OpenAI or equivalents). For OSS/other providers, skip login entirely.
     if !config.model_provider.requires_openai_auth {
@@ -1990,6 +1998,38 @@ mod tests {
             should_show,
             "Trust prompt should be shown when project trust is undecided"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn github_copilot_provider_shows_login_screen_when_logged_out() -> std::io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let mut config = build_config(&temp_dir).await?;
+        config.model_provider_id = "github-copilot".to_string();
+        config.model_provider.requires_openai_auth = false;
+
+        assert!(should_show_login_screen(
+            LoginStatus::not_authenticated(),
+            &config
+        ));
+        assert!(provider_supports_interactive_onboarding_login(&config));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn github_copilot_provider_hides_login_screen_when_authenticated() -> std::io::Result<()>
+    {
+        let temp_dir = TempDir::new()?;
+        let mut config = build_config(&temp_dir).await?;
+        config.model_provider_id = "github-copilot".to_string();
+        config.model_provider.requires_openai_auth = false;
+
+        let login_status = LoginStatus {
+            codex_auth_mode: None,
+            github_copilot_authenticated: true,
+        };
+
+        assert!(!should_show_login_screen(login_status, &config));
         Ok(())
     }
 

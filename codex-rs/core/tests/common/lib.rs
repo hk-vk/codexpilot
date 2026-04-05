@@ -301,8 +301,9 @@ where
     use tokio::time::Duration;
     use tokio::time::timeout;
     loop {
-        // Allow a bit more time to accommodate async startup work (e.g. config IO, tool discovery)
-        let ev = timeout(wait_time.max(Duration::from_secs(10)), codex.next_event())
+        // Full integration-suite runs can accumulate substantial scheduler and startup
+        // jitter (tool discovery, plugin loading, background watchers, sandbox setup).
+        let ev = timeout(wait_time.max(Duration::from_secs(30)), codex.next_event())
             .await
             .expect("timeout waiting for event")
             .expect("stream ended unexpectedly");
@@ -363,8 +364,40 @@ pub fn format_with_current_shell_display_non_login(command: &str) -> String {
         .expect("serialize current shell command without login")
 }
 
-pub fn stdio_server_bin() -> Result<String, CargoBinError> {
-    codex_utils_cargo_bin::cargo_bin("test_stdio_server").map(|p| p.to_string_lossy().to_string())
+pub fn stdio_server_bin() -> anyhow::Result<String> {
+    static STDIO_SERVER_BIN: OnceLock<Result<String, String>> = OnceLock::new();
+
+    let result = STDIO_SERVER_BIN.get_or_init(|| {
+        if let Ok(path) = codex_utils_cargo_bin::cargo_bin("test_stdio_server") {
+            return Ok(path.to_string_lossy().to_string());
+        }
+
+        let repo_root = codex_utils_cargo_bin::repo_root()
+            .map_err(|err| format!("resolve repo root for test_stdio_server: {err}"))?;
+        let workspace_root = repo_root.join("codex-rs");
+        let output = std::process::Command::new("cargo")
+            .current_dir(&workspace_root)
+            .args([
+                "build",
+                "-p",
+                "codex-rmcp-client",
+                "--bin",
+                "test_stdio_server",
+            ])
+            .output()
+            .map_err(|err| format!("build test_stdio_server: {err}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "build test_stdio_server failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        codex_utils_cargo_bin::cargo_bin("test_stdio_server")
+            .map(|path| path.to_string_lossy().to_string())
+            .map_err(|err| format!("locate built test_stdio_server: {err}"))
+    });
+
+    result.clone().map_err(anyhow::Error::msg)
 }
 
 pub mod fs_wait {

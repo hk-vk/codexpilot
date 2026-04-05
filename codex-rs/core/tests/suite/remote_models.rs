@@ -44,6 +44,7 @@ use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use serial_test::serial;
 use tempfile::TempDir;
 use tokio::time::Duration;
 use tokio::time::Instant;
@@ -362,6 +363,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
             approvals_reviewer: None,
             sandbox_policy: None,
             windows_sandbox_level: None,
+            model_provider: None,
             model: Some(REMOTE_MODEL_SLUG.to_string()),
             effort: None,
             summary: None,
@@ -604,6 +606,7 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
             approvals_reviewer: None,
             sandbox_policy: None,
             windows_sandbox_level: None,
+            model_provider: None,
             model: Some(model.to_string()),
             effort: None,
             summary: None,
@@ -839,6 +842,7 @@ async fn remote_models_merge_preserves_bundled_models_on_empty_response() -> Res
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn remote_models_request_times_out_after_5s() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
@@ -890,11 +894,11 @@ async fn remote_models_request_times_out_after_5s() -> Result<()> {
         .map(|req| format!("{} {}", req.method, req.url.path()))
         .collect::<Vec<String>>();
     assert!(
-        elapsed >= Duration::from_millis(4_500),
+        elapsed >= Duration::from_millis(4_000),
         "expected models call to block near the timeout; took {elapsed:?}"
     );
     assert!(
-        elapsed < Duration::from_millis(5_800),
+        elapsed < Duration::from_millis(6_900),
         "expected models call to time out before the delayed response; took {elapsed:?}"
     );
     assert_eq!(

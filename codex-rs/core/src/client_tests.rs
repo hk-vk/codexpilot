@@ -22,6 +22,8 @@ use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use pretty_assertions::assert_eq;
+
+use crate::RequestInitiator;
 use serde_json::json;
 
 fn test_model_client(session_source: SessionSource) -> ModelClient {
@@ -189,7 +191,12 @@ fn build_provider_responses_headers_adds_copilot_headers_for_images_and_tool_out
         },
     ];
 
-    let headers = build_provider_responses_headers(&provider, &input);
+    let headers = build_provider_responses_headers(
+        &provider,
+        &input,
+        &SessionSource::Cli,
+        RequestInitiator::Auto,
+    );
 
     assert_eq!(
         headers
@@ -214,7 +221,12 @@ fn build_provider_responses_headers_adds_copilot_headers_for_images_and_tool_out
 #[test]
 fn build_provider_responses_headers_skips_non_copilot_providers() {
     let provider = create_oss_provider_with_base_url("https://example.com/v1", WireApi::Responses);
-    let headers = build_provider_responses_headers(&provider, &[]);
+    let headers = build_provider_responses_headers(
+        &provider,
+        &[],
+        &SessionSource::Cli,
+        RequestInitiator::Auto,
+    );
     assert_eq!(headers.len(), 0);
 }
 
@@ -226,11 +238,78 @@ fn build_provider_responses_headers_accepts_copilot_base_url_even_with_custom_na
     );
     provider.name = "Custom Provider Name".to_string();
 
-    let headers = build_provider_responses_headers(&provider, &[]);
+    let headers = build_provider_responses_headers(
+        &provider,
+        &[],
+        &SessionSource::Cli,
+        RequestInitiator::Auto,
+    );
     assert_eq!(
         headers
             .get(GITHUB_COPILOT_INTENT_HEADER)
             .and_then(|value| value.to_str().ok()),
         Some("conversation-edits")
+    );
+}
+
+#[test]
+fn build_provider_responses_headers_marks_subagent_bootstrap_requests_as_agent() {
+    let provider = test_github_copilot_provider();
+    let input = vec![ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "delegated task".to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    }];
+
+    let headers = build_provider_responses_headers(
+        &provider,
+        &input,
+        &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 1,
+            agent_path: Default::default(),
+            agent_nickname: None,
+            agent_role: None,
+        }),
+        RequestInitiator::Auto,
+    );
+
+    assert_eq!(
+        headers
+            .get(GITHUB_COPILOT_INITIATOR_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some("agent")
+    );
+}
+
+#[test]
+fn build_provider_responses_headers_respects_explicit_agent_initiator() {
+    let provider = test_github_copilot_provider();
+    let input = vec![ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "synthetic prompt".to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    }];
+
+    let headers = build_provider_responses_headers(
+        &provider,
+        &input,
+        &SessionSource::Cli,
+        RequestInitiator::Agent,
+    );
+
+    assert_eq!(
+        headers
+            .get(GITHUB_COPILOT_INITIATOR_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some("agent")
     );
 }

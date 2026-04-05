@@ -1,4 +1,5 @@
 use crate::Prompt;
+use crate::RequestInitiator;
 use crate::RolloutRecorder;
 use crate::codex::Session;
 use crate::codex::TurnContext;
@@ -340,6 +341,7 @@ mod job {
                 text: phase_one::PROMPT.to_string(),
             },
             personality: None,
+            request_initiator: RequestInitiator::Agent,
             output_schema: Some(output_schema()),
         };
 

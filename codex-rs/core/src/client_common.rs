@@ -22,6 +22,18 @@ pub const REVIEW_EXIT_SUCCESS_TMPL: &str = include_str!("../templates/review/exi
 pub const REVIEW_EXIT_INTERRUPTED_TMPL: &str =
     include_str!("../templates/review/exit_interrupted.xml");
 
+/// Controls how synthesized Codex requests should be attributed by provider backends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RequestInitiator {
+    /// Infer attribution from the request shape and session context.
+    #[default]
+    Auto,
+    /// Treat the request as coming directly from the user.
+    User,
+    /// Treat the request as coming from agent-controlled follow-up work.
+    Agent,
+}
+
 /// API request payload for a single model turn
 #[derive(Default, Debug, Clone)]
 pub struct Prompt {
@@ -39,6 +51,9 @@ pub struct Prompt {
 
     /// Optionally specify the personality of the model.
     pub personality: Option<Personality>,
+
+    /// Controls provider-specific request attribution for synthesized turns.
+    pub request_initiator: RequestInitiator,
 
     /// Optional the output schema for the model's response.
     pub output_schema: Option<Value>,

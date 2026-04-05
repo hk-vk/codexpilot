@@ -605,6 +605,35 @@ text(JSON.stringify(returnsUndefined));
     }
 
     #[tokio::test]
+    async fn execute_preserves_text_emitted_before_yield() {
+        let service = CodeModeService::new();
+
+        let response = service
+            .execute(ExecuteRequest {
+                source: r#"
+text("before yield");
+yield_control();
+await new Promise(() => {});
+"#
+                .to_string(),
+                yield_time_ms: None,
+                ..execute_request("")
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response,
+            RuntimeResponse::Yielded {
+                cell_id: "1".to_string(),
+                content_items: vec![FunctionCallOutputContentItem::InputText {
+                    text: "before yield".to_string(),
+                }],
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn terminate_waits_for_runtime_shutdown_before_responding() {
         let inner = test_inner();
         let (event_tx, event_rx) = mpsc::unbounded_channel();

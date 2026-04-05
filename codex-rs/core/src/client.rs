@@ -95,6 +95,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::client_common::Prompt;
+use crate::client_common::RequestInitiator;
 use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
 use crate::flags::CODEX_RS_SSE_FIXTURE;
@@ -781,6 +782,8 @@ impl ModelClientSession {
         extra_headers.extend(build_provider_responses_headers(
             &self.client.state.provider,
             &prompt.get_formatted_input(),
+            &self.client.state.session_source,
+            prompt.request_initiator,
         ));
         ApiResponsesOptions {
             conversation_id: Some(conversation_id),
@@ -1393,6 +1396,8 @@ fn build_ws_client_metadata(turn_metadata_header: Option<&str>) -> Option<HashMa
 fn build_provider_responses_headers(
     provider: &ModelProviderInfo,
     input: &[ResponseItem],
+    session_source: &SessionSource,
+    request_initiator: RequestInitiator,
 ) -> ApiHeaderMap {
     let mut headers = ApiHeaderMap::new();
     if !is_github_copilot_provider(provider) {
@@ -1403,9 +1408,15 @@ fn build_provider_responses_headers(
         GITHUB_COPILOT_INTENT_HEADER,
         HeaderValue::from_static("conversation-edits"),
     );
+    let initiator = match request_initiator {
+        RequestInitiator::User => "user",
+        RequestInitiator::Agent => "agent",
+        RequestInitiator::Auto if matches!(session_source, SessionSource::SubAgent(_)) => "agent",
+        RequestInitiator::Auto => infer_github_copilot_initiator(input),
+    };
     headers.insert(
         GITHUB_COPILOT_INITIATOR_HEADER,
-        HeaderValue::from_static(infer_github_copilot_initiator(input)),
+        HeaderValue::from_static(initiator),
     );
     if prompt_has_github_copilot_vision_input(input) {
         headers.insert(

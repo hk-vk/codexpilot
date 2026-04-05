@@ -417,6 +417,7 @@ async fn resume_model_switch_is_not_duplicated_after_pre_turn_override() -> Resu
             approvals_reviewer: None,
             sandbox_policy: None,
             windows_sandbox_level: None,
+            model_provider: None,
             model: Some("gpt-5.1-codex-max".to_string()),
             effort: None,
             summary: None,

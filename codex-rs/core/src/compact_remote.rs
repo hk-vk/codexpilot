@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::Prompt;
+use crate::RequestInitiator;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::built_tools;
@@ -111,6 +112,7 @@ async fn run_remote_compact_task_inner_impl(
         parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
         base_instructions,
         personality: turn_context.personality,
+        request_initiator: RequestInitiator::Agent,
         output_schema: None,
     };
 

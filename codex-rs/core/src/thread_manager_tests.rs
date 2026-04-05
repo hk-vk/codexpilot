@@ -287,6 +287,12 @@ async fn new_uses_configured_openai_provider_for_model_refresh() {
         .get_mut("openai")
         .expect("openai provider should exist")
         .base_url = Some(server.uri());
+    config.model_provider_id = "openai".to_string();
+    config.model_provider = config
+        .model_providers
+        .get("openai")
+        .expect("openai provider should exist")
+        .clone();
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());

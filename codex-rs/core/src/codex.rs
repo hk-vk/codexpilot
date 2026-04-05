@@ -171,6 +171,7 @@ use uuid::Uuid;
 use crate::client::ModelClient;
 use crate::client::ModelClientSession;
 use crate::client_common::Prompt;
+use crate::client_common::RequestInitiator;
 use crate::client_common::ResponseEvent;
 use crate::codex_thread::ThreadConfigSnapshot;
 use crate::compact::collect_user_messages;
@@ -521,16 +522,6 @@ impl Codex {
                 )
             };
             warn!("{message}");
-            config.startup_warnings.push(message);
-        }
-        if config.features.enabled(Feature::CodeMode)
-            && let Err(err) = resolve_compatible_node(config.js_repl_node_path.as_deref()).await
-        {
-            let message = format!(
-                "Disabled `exec` for this session because the configured Node runtime is unavailable or incompatible. {err}"
-            );
-            warn!("{message}");
-            let _ = config.features.disable(Feature::CodeMode);
             config.startup_warnings.push(message);
         }
 
@@ -6513,6 +6504,11 @@ pub(crate) fn build_prompt(
         parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
         base_instructions,
         personality: turn_context.personality,
+        request_initiator: if matches!(turn_context.session_source, SessionSource::SubAgent(_)) {
+            RequestInitiator::Agent
+        } else {
+            RequestInitiator::Auto
+        },
         output_schema: turn_context.final_output_json_schema.clone(),
     }
 }

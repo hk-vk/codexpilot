@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::Prompt;
+use crate::RequestInitiator;
 use crate::client::ModelClientSession;
 use crate::client_common::ResponseEvent;
 #[cfg(test)]
@@ -123,6 +124,7 @@ async fn run_compact_task_inner(
             input: turn_input,
             base_instructions: sess.get_base_instructions().await,
             personality: turn_context.personality,
+            request_initiator: RequestInitiator::Agent,
             ..Default::default()
         };
         let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();

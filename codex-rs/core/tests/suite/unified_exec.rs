@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
+use std::process::Command;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -34,8 +35,26 @@ use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
+use serial_test::serial;
 use tokio::time::Duration;
 use which::which;
+
+const UNIFIED_EXEC_TEST_SUBPROCESS_ENV_VAR: &str = "CODEX_UNIFIED_EXEC_TEST_SUBPROCESS";
+
+fn run_unified_exec_test_in_subprocess(test_name: &str) -> Result<()> {
+    let output = Command::new(std::env::current_exe()?)
+        .arg("--exact")
+        .arg(test_name)
+        .env(UNIFIED_EXEC_TEST_SUBPROCESS_ENV_VAR, "1")
+        .output()?;
+    assert!(
+        output.status.success(),
+        "subprocess test `{test_name}` failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    Ok(())
+}
 
 fn extract_output_text(item: &Value) -> Option<&str> {
     item.get("output").and_then(|value| match value {
@@ -924,7 +943,14 @@ async fn unified_exec_emits_terminal_interaction_for_write_stdin() -> Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<()> {
+    if std::env::var_os(UNIFIED_EXEC_TEST_SUBPROCESS_ENV_VAR).is_none() {
+        return run_unified_exec_test_in_subprocess(
+            "suite::unified_exec::unified_exec_terminal_interaction_captures_delayed_output",
+        );
+    }
+
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     skip_if_windows!(Ok(()));
@@ -1050,7 +1076,7 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
 
     // Consume all events for this turn so we can assert on each stage.
     loop {
-        let msg = wait_for_event(&codex, |_| true).await;
+        let msg = wait_for_event_with_timeout(&codex, |_| true, Duration::from_secs(120)).await;
         match msg {
             EventMsg::ExecCommandBegin(ev) if ev.call_id == open_call_id => {
                 begin_event = Some(ev);
@@ -1069,8 +1095,24 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
             }
             _ => {}
         };
-        if task_completed && end_event.is_some() {
+        if task_completed && end_event.is_some() && terminal_events.len() >= 3 {
             break;
+        }
+    }
+
+    while task_completed && end_event.is_some() && terminal_events.len() < 3 {
+        let Ok(msg) = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_event_with_timeout(&codex, |_| true, Duration::from_secs(5)),
+        )
+        .await
+        else {
+            break;
+        };
+        if let EventMsg::TerminalInteraction(ev) = msg
+            && ev.call_id == open_call_id
+        {
+            terminal_events.push(ev);
         }
     }
 

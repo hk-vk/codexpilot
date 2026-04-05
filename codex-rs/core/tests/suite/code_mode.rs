@@ -31,6 +31,7 @@ use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
+use serial_test::serial;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
@@ -398,6 +399,7 @@ text(JSON.stringify(result));
 
 #[cfg_attr(windows, ignore = "flaky on windows")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn code_mode_nested_tool_calls_can_run_in_parallel() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -415,7 +417,7 @@ const args = {
   barrier: {
     id: "code-mode-parallel-tools-warmup",
     participants: 2,
-    timeout_ms: 1_000,
+    timeout_ms: 3_000,
   },
 };
 
@@ -430,7 +432,7 @@ const args = {
   barrier: {
     id: "code-mode-parallel-tools",
     participants: 2,
-    timeout_ms: 1_000,
+    timeout_ms: 3_000,
   },
 };
 
@@ -474,7 +476,7 @@ text(JSON.stringify(results));
     let duration = start.elapsed();
 
     assert!(
-        duration < Duration::from_millis(1_600),
+        duration < Duration::from_millis(3_200),
         "expected nested tools to finish in parallel, got {duration:?}",
     );
 

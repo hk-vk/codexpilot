@@ -1936,32 +1936,71 @@ async fn ensure_node_version(node_path: &Path) -> Result<(), String> {
 }
 
 pub(crate) async fn resolve_compatible_node(config_path: Option<&Path>) -> Result<PathBuf, String> {
-    let node_path = resolve_node(config_path).ok_or_else(|| {
-        "Node runtime not found; install Node or set CODEX_JS_REPL_NODE_PATH".to_string()
-    })?;
-    ensure_node_version(&node_path).await?;
-    Ok(node_path)
-}
-
-pub(crate) fn resolve_node(config_path: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("CODEX_JS_REPL_NODE_PATH") {
-        let p = PathBuf::from(path);
-        if p.exists() {
-            return Some(p);
+        let node_path = PathBuf::from(path);
+        if node_path.exists() {
+            ensure_node_version(&node_path).await?;
+            return Ok(node_path);
         }
     }
 
-    if let Some(path) = config_path
-        && path.exists()
-    {
-        return Some(path.to_path_buf());
+    if let Some(node_path) = config_path.filter(|path| path.exists()) {
+        ensure_node_version(node_path).await?;
+        return Ok(node_path.to_path_buf());
     }
 
-    if let Ok(path) = which::which("node") {
-        return Some(path);
+    let candidates = resolve_node_candidates();
+    if candidates.is_empty() {
+        return Err(
+            "Node runtime not found; install Node or set CODEX_JS_REPL_NODE_PATH".to_string(),
+        );
     }
 
-    None
+    let mut last_error = None;
+    for node_path in candidates {
+        match ensure_node_version(&node_path).await {
+            Ok(()) => return Ok(node_path),
+            Err(err) => last_error = Some(err),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        "Node runtime not found; install Node or set CODEX_JS_REPL_NODE_PATH".to_string()
+    }))
+}
+
+fn resolve_node_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut push_candidate = |path: PathBuf| {
+        if path.exists() && !candidates.contains(&path) {
+            candidates.push(path);
+        }
+    };
+
+    if let Ok(paths) = which::which_all("node") {
+        for path in paths {
+            push_candidate(path);
+        }
+    } else if let Ok(path) = which::which("node") {
+        push_candidate(path);
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        let nvm_versions_dir = home.join(".nvm/versions/node");
+        if let Ok(entries) = std::fs::read_dir(nvm_versions_dir) {
+            let mut versioned_nodes = entries
+                .flatten()
+                .map(|entry| entry.path().join("bin/node"))
+                .collect::<Vec<_>>();
+            versioned_nodes.sort();
+            versioned_nodes.reverse();
+            for node_path in versioned_nodes {
+                push_candidate(node_path);
+            }
+        }
+    }
+
+    candidates
 }
 
 #[cfg(test)]
