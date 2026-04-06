@@ -25,7 +25,6 @@ use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
-use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::resolve_oss_provider;
@@ -1672,19 +1671,9 @@ async fn reconcile_github_copilot_provider_on_startup(
 
     let wrote_provider =
         ensure_github_copilot_provider_config(&config.codex_home, &auth.api_base_url)?;
-    let switched_provider = if config.model_provider_id != "github-copilot" {
-        ConfigEditsBuilder::new(&config.codex_home)
-            .with_profile(active_profile)
-            .set_model_provider(Some("github-copilot"))
-            .apply()
-            .await
-            .map_err(|err| color_eyre::eyre::eyre!(err))?;
-        true
-    } else {
-        false
-    };
+    let _ = active_profile;
 
-    Ok(wrote_provider || switched_provider)
+    Ok(wrote_provider)
 }
 
 async fn get_login_status(

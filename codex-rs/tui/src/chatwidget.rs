@@ -8511,7 +8511,7 @@ impl ChatWidget {
                         effort: selected_effort,
                     });
             } else {
-                self.apply_model_and_effort(selected_model, selected_effort);
+                self.apply_model_and_effort(provider_id.clone(), selected_model, selected_effort);
             }
             return;
         }
@@ -8660,18 +8660,43 @@ impl ChatWidget {
 
     fn apply_model_and_effort_without_persist(
         &self,
+        provider_id: Option<String>,
         model: String,
         effort: Option<ReasoningEffortConfig>,
     ) {
-        self.app_event_tx.send(AppEvent::UpdateModel(model));
-        self.app_event_tx
-            .send(AppEvent::UpdateReasoningEffort(effort));
+        self.app_event_tx.send(AppEvent::StageModelSelection {
+            provider_id: provider_id.clone(),
+            model: model.clone(),
+            effort,
+        });
+        self.app_event_tx.send(AppEvent::CodexOp(
+            AppCommand::override_turn_context(
+                /*cwd*/ None,
+                /*approval_policy*/ None,
+                /*approvals_reviewer*/ None,
+                /*sandbox_policy*/ None,
+                /*windows_sandbox_level*/ None,
+                provider_id,
+                Some(model),
+                Some(effort),
+                /*summary*/ None,
+                /*service_tier*/ None,
+                /*collaboration_mode*/ None,
+                /*personality*/ None,
+            )
+            .into_core(),
+        ));
     }
 
-    fn apply_model_and_effort(&self, model: String, effort: Option<ReasoningEffortConfig>) {
-        self.apply_model_and_effort_without_persist(model.clone(), effort);
+    fn apply_model_and_effort(
+        &self,
+        provider_id: Option<String>,
+        model: String,
+        effort: Option<ReasoningEffortConfig>,
+    ) {
+        self.apply_model_and_effort_without_persist(provider_id.clone(), model.clone(), effort);
         self.app_event_tx.send(AppEvent::PersistModelSelection {
-            provider_id: None,
+            provider_id,
             model,
             effort,
         });

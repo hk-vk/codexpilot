@@ -2309,6 +2309,7 @@ impl App {
                 approval_policy,
                 approvals_reviewer,
                 sandbox_policy,
+                model_provider,
                 model,
                 effort,
                 summary,
@@ -2392,7 +2393,9 @@ impl App {
                             approvals_reviewer
                                 .unwrap_or(self.chat_widget.config_ref().approvals_reviewer),
                             sandbox_policy.clone(),
-                            Some(self.chat_widget.config_ref().model_provider_id.clone()),
+                            model_provider.clone().or_else(|| {
+                                Some(self.chat_widget.config_ref().model_provider_id.clone())
+                            }),
                             model.to_string(),
                             effort,
                             *summary,

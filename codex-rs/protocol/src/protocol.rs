@@ -265,6 +265,10 @@ pub enum Op {
         /// Policy to use for tool calls such as `local_shell`.
         sandbox_policy: SandboxPolicy,
 
+        /// Model provider identifier to use for this turn.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model_provider: Option<String>,
+
         /// Must be a valid model slug for the configured client session
         /// associated with this conversation.
         model: String,
