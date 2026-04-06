@@ -457,6 +457,8 @@ async fn prepare_realtime_start(
     let auth_manager = sess
         .services
         .model_client
+        .read()
+        .await
         .auth_manager()
         .unwrap_or_else(|| Arc::clone(&sess.services.auth_manager));
     let auth = auth_manager.auth().await;

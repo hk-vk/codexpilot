@@ -7600,6 +7600,11 @@ impl ChatWidget {
         let default_effort: ReasoningEffortConfig = preset.default_reasoning_effort;
 
         let switch_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+            tx.send(AppEvent::StageModelSelection {
+                provider_id: None,
+                model: switch_model_for_events.clone(),
+                effort: Some(default_effort),
+            });
             tx.send(AppEvent::CodexOp(
                 AppCommand::override_turn_context(
                     /*cwd*/ None,
@@ -7617,8 +7622,6 @@ impl ChatWidget {
                 )
                 .into_core(),
             ));
-            tx.send(AppEvent::UpdateModel(switch_model_for_events.clone()));
-            tx.send(AppEvent::UpdateReasoningEffort(Some(default_effort)));
         })];
 
         let keep_actions: Vec<SelectionAction> = Vec::new();
@@ -8291,9 +8294,11 @@ impl ChatWidget {
                 return;
             }
 
-            if let Some(provider_id) = provider_id.clone() {
-                tx.send(AppEvent::UpdateModelProvider(provider_id));
-            }
+            tx.send(AppEvent::StageModelSelection {
+                provider_id: provider_id.clone(),
+                model: model_for_action.clone(),
+                effort: effort_for_action,
+            });
             tx.send(AppEvent::CodexOp(
                 AppCommand::override_turn_context(
                     /*cwd*/ None,
@@ -8311,8 +8316,6 @@ impl ChatWidget {
                 )
                 .into_core(),
             ));
-            tx.send(AppEvent::UpdateModel(model_for_action.clone()));
-            tx.send(AppEvent::UpdateReasoningEffort(effort_for_action));
             tx.send(AppEvent::PersistModelSelection {
                 provider_id: provider_id.clone(),
                 model: model_for_action.clone(),
@@ -8589,9 +8592,11 @@ impl ChatWidget {
                         effort: choice_effort,
                     });
                 } else {
-                    if let Some(provider_id) = provider_id_for_action.clone() {
-                        tx.send(AppEvent::UpdateModelProvider(provider_id));
-                    }
+                    tx.send(AppEvent::StageModelSelection {
+                        provider_id: provider_id_for_action.clone(),
+                        model: model_for_action.clone(),
+                        effort: choice_effort,
+                    });
                     tx.send(AppEvent::CodexOp(
                         AppCommand::override_turn_context(
                             /*cwd*/ None,
@@ -8609,8 +8614,6 @@ impl ChatWidget {
                         )
                         .into_core(),
                     ));
-                    tx.send(AppEvent::UpdateModel(model_for_action.clone()));
-                    tx.send(AppEvent::UpdateReasoningEffort(choice_effort));
                     tx.send(AppEvent::PersistModelSelection {
                         provider_id: provider_id_for_action.clone(),
                         model: model_for_action.clone(),
@@ -9709,6 +9712,34 @@ impl ChatWidget {
         self.config.model_provider_id = model_provider_id.to_string();
         if let Some(provider) = self.config.model_providers.get(model_provider_id).cloned() {
             self.config.model_provider = provider;
+        }
+        self.refresh_model_dependent_surfaces();
+    }
+
+    pub(crate) fn stage_model_selection(
+        &mut self,
+        model_provider_id: Option<&str>,
+        model: &str,
+        effort: Option<ReasoningEffortConfig>,
+    ) {
+        if let Some(model_provider_id) = model_provider_id {
+            self.config.model_provider_id = model_provider_id.to_string();
+            if let Some(provider) = self.config.model_providers.get(model_provider_id).cloned() {
+                self.config.model_provider = provider;
+            }
+        }
+        self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
+            Some(model.to_string()),
+            Some(effort),
+            /*developer_instructions*/ None,
+        );
+        if self.collaboration_modes_enabled()
+            && let Some(mask) = self.active_collaboration_mask.as_mut()
+        {
+            mask.model = Some(model.to_string());
+            if mask.mode != Some(ModeKind::Plan) {
+                mask.reasoning_effort = Some(effort);
+            }
         }
         self.refresh_model_dependent_surfaces();
     }

@@ -282,8 +282,12 @@ pub(crate) enum AppEvent {
     /// Update the current reasoning effort in the running app and widget.
     UpdateReasoningEffort(Option<ReasoningEffort>),
 
-    /// Update the current model provider in the running widget.
-    UpdateModelProvider(String),
+    /// Stage a model/provider selection for the next turn without updating visible UI yet.
+    StageModelSelection {
+        provider_id: Option<String>,
+        model: String,
+        effort: Option<ReasoningEffort>,
+    },
 
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),

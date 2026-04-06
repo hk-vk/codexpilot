@@ -158,6 +158,8 @@ use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStartedNotification;
 use codex_app_server_protocol::ThreadStatus;
+use codex_app_server_protocol::ThreadTurnContextOverrideParams;
+use codex_app_server_protocol::ThreadTurnContextOverrideResponse;
 use codex_app_server_protocol::ThreadUnarchiveParams;
 use codex_app_server_protocol::ThreadUnarchiveResponse;
 use codex_app_server_protocol::ThreadUnarchivedNotification;
@@ -744,6 +746,10 @@ impl CodexMessageProcessor {
                 self.thread_metadata_update(to_connection_request_id(request_id), params)
                     .await;
             }
+            ClientRequest::ThreadTurnContextOverride { request_id, params } => {
+                self.thread_turn_context_override(to_connection_request_id(request_id), params)
+                    .await;
+            }
             ClientRequest::ThreadUnarchive { request_id, params } => {
                 self.thread_unarchive(to_connection_request_id(request_id), params)
                     .await;
@@ -1093,7 +1099,7 @@ impl CodexMessageProcessor {
                     .await;
             }
             Err(error) => {
-                self.outgoing.send_error(request_id, error).await;
+                self.outgoing.send_error(request_id, error.into()).await;
             }
         }
     }
@@ -6620,6 +6626,82 @@ impl CodexMessageProcessor {
         }
     }
 
+    async fn thread_turn_context_override(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadTurnContextOverrideParams,
+    ) {
+        let ThreadTurnContextOverrideParams {
+            thread_id,
+            cwd,
+            approval_policy,
+            approvals_reviewer,
+            sandbox_policy,
+            windows_sandbox_level,
+            model_provider,
+            model,
+            service_tier,
+            effort,
+            summary,
+            personality,
+            collaboration_mode,
+        } = params;
+
+        let (_, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
+        let collaboration_modes_config = CollaborationModesConfig {
+            default_mode_request_user_input: thread.enabled(Feature::DefaultModeRequestUserInput),
+        };
+        let collaboration_mode = collaboration_mode.map(|mode| {
+            self.normalize_turn_start_collaboration_mode(mode, collaboration_modes_config)
+        });
+
+        match self
+            .submit_core_op(
+                &request_id,
+                thread.as_ref(),
+                Op::OverrideTurnContext {
+                    cwd,
+                    approval_policy: approval_policy.map(AskForApproval::to_core),
+                    approvals_reviewer: approvals_reviewer
+                        .map(codex_app_server_protocol::ApprovalsReviewer::to_core),
+                    sandbox_policy: sandbox_policy.map(|policy| policy.to_core()),
+                    windows_sandbox_level,
+                    model_provider,
+                    model,
+                    effort,
+                    summary,
+                    service_tier,
+                    collaboration_mode,
+                    personality,
+                },
+            )
+            .await
+        {
+            Ok(_) => {
+                self.outgoing
+                    .send_response(request_id, ThreadTurnContextOverrideResponse {})
+                    .await;
+            }
+            Err(CodexErr::InvalidRequest(message)) => {
+                self.send_invalid_request_error(request_id, message).await;
+            }
+            Err(error) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to override thread turn context: {error}"),
+                )
+                .await;
+            }
+        }
+    }
+
     async fn turn_start(
         &self,
         request_id: ConnectionRequestId,
@@ -6662,6 +6744,7 @@ impl CodexMessageProcessor {
             || params.approval_policy.is_some()
             || params.approvals_reviewer.is_some()
             || params.sandbox_policy.is_some()
+            || params.model_provider.is_some()
             || params.model.is_some()
             || params.service_tier.is_some()
             || params.effort.is_some()
@@ -6683,7 +6766,7 @@ impl CodexMessageProcessor {
                             .map(codex_app_server_protocol::ApprovalsReviewer::to_core),
                         sandbox_policy: params.sandbox_policy.map(|p| p.to_core()),
                         windows_sandbox_level: None,
-                        model_provider: None,
+                        model_provider: params.model_provider,
                         model: params.model,
                         effort: params.effort.map(Some),
                         summary: params.summary,

@@ -1648,6 +1648,89 @@ impl App {
         self.note_thread_outbound_op(thread_id, op).await;
     }
 
+    fn apply_turn_context_override_to_session(
+        session: &mut ThreadSessionState,
+        cwd: &Option<PathBuf>,
+        approval_policy: &Option<AskForApproval>,
+        approvals_reviewer: &Option<ApprovalsReviewer>,
+        sandbox_policy: &Option<SandboxPolicy>,
+        model_provider: &Option<String>,
+        model: &Option<String>,
+        effort: &Option<Option<ReasoningEffortConfig>>,
+        service_tier: &Option<Option<codex_protocol::config_types::ServiceTier>>,
+    ) {
+        if let Some(cwd) = cwd.clone() {
+            session.cwd = cwd;
+        }
+        if let Some(approval_policy) = approval_policy.clone() {
+            session.approval_policy = approval_policy;
+        }
+        if let Some(approvals_reviewer) = approvals_reviewer.clone() {
+            session.approvals_reviewer = approvals_reviewer;
+        }
+        if let Some(sandbox_policy) = sandbox_policy.clone() {
+            session.sandbox_policy = sandbox_policy;
+        }
+        if let Some(model_provider) = model_provider.clone() {
+            session.model_provider_id = model_provider;
+        }
+        if let Some(model) = model.clone() {
+            session.model = model;
+        }
+        if let Some(effort) = effort.clone() {
+            session.reasoning_effort = effort;
+        }
+        if let Some(service_tier) = service_tier.clone() {
+            session.service_tier = service_tier;
+        }
+    }
+
+    async fn apply_cached_thread_turn_context_override(
+        &mut self,
+        thread_id: ThreadId,
+        cwd: &Option<PathBuf>,
+        approval_policy: &Option<AskForApproval>,
+        approvals_reviewer: &Option<ApprovalsReviewer>,
+        sandbox_policy: &Option<SandboxPolicy>,
+        model_provider: &Option<String>,
+        model: &Option<String>,
+        effort: &Option<Option<ReasoningEffortConfig>>,
+        service_tier: &Option<Option<codex_protocol::config_types::ServiceTier>>,
+    ) {
+        if let Some(session) = self.primary_session_configured.as_mut()
+            && session.thread_id == thread_id
+        {
+            Self::apply_turn_context_override_to_session(
+                session,
+                cwd,
+                approval_policy,
+                approvals_reviewer,
+                sandbox_policy,
+                model_provider,
+                model,
+                effort,
+                service_tier,
+            );
+        }
+
+        if let Some(channel) = self.thread_event_channels.get(&thread_id) {
+            let mut store = channel.store.lock().await;
+            if let Some(session) = store.session.as_mut() {
+                Self::apply_turn_context_override_to_session(
+                    session,
+                    cwd,
+                    approval_policy,
+                    approvals_reviewer,
+                    sandbox_policy,
+                    model_provider,
+                    model,
+                    effort,
+                    service_tier,
+                );
+            }
+        }
+    }
+
     async fn active_turn_id_for_thread(&self, thread_id: ThreadId) -> Option<String> {
         let channel = self.thread_event_channels.get(&thread_id)?;
         let store = channel.store.lock().await;
@@ -2309,6 +2392,7 @@ impl App {
                             approvals_reviewer
                                 .unwrap_or(self.chat_widget.config_ref().approvals_reviewer),
                             sandbox_policy.clone(),
+                            Some(self.chat_widget.config_ref().model_provider_id.clone()),
                             model.to_string(),
                             effort,
                             *summary,
@@ -2398,7 +2482,89 @@ impl App {
                 app_server.reload_user_config().await?;
                 Ok(true)
             }
-            AppCommandView::OverrideTurnContext { .. } => Ok(true),
+            AppCommandView::OverrideTurnContext {
+                cwd,
+                approval_policy,
+                approvals_reviewer,
+                sandbox_policy,
+                windows_sandbox_level,
+                model_provider,
+                model,
+                effort,
+                summary,
+                service_tier,
+                collaboration_mode,
+                personality,
+            } => {
+                app_server
+                    .thread_turn_context_override(
+                        thread_id,
+                        cwd.clone(),
+                        approval_policy.clone(),
+                        approvals_reviewer.clone(),
+                        sandbox_policy.clone(),
+                        windows_sandbox_level.clone(),
+                        model_provider.clone(),
+                        model.clone(),
+                        effort.clone(),
+                        summary.clone(),
+                        service_tier.clone(),
+                        collaboration_mode.clone(),
+                        personality.clone(),
+                    )
+                    .await?;
+                self.apply_cached_thread_turn_context_override(
+                    thread_id,
+                    cwd,
+                    approval_policy,
+                    approvals_reviewer,
+                    sandbox_policy,
+                    model_provider,
+                    model,
+                    effort,
+                    service_tier,
+                )
+                .await;
+                if self.current_displayed_thread_id() == Some(thread_id) {
+                    if let Some(approval_policy) = approval_policy.clone() {
+                        self.chat_widget.set_approval_policy(approval_policy);
+                    }
+                    if let Some(sandbox_policy) = sandbox_policy.clone() {
+                        if let Err(err) = self.chat_widget.set_sandbox_policy(sandbox_policy) {
+                            tracing::warn!(%err, "failed to sync sandbox policy after override");
+                        }
+                    }
+                    if let Some(model_provider) = model_provider.as_ref() {
+                        self.chat_widget.set_model_provider(model_provider);
+                    }
+                    if let Some(model) = model.as_ref() {
+                        self.chat_widget.set_model(model);
+                    }
+                    if let Some(effort) = effort.clone() {
+                        self.on_update_reasoning_effort(effort);
+                    }
+                    if let Some(service_tier) = service_tier.clone() {
+                        self.chat_widget.set_service_tier(service_tier);
+                    }
+                    if model_provider.is_some() || model.is_some() || effort.is_some() {
+                        let current_model = self.chat_widget.current_model().to_string();
+                        let current_provider =
+                            self.chat_widget.config_ref().model_provider_id.clone();
+                        let mut message = format!(
+                            "Switched current session to {current_provider} / {current_model}"
+                        );
+                        if let Some(label) = Self::reasoning_label_for(
+                            &current_model,
+                            self.chat_widget.current_reasoning_effort(),
+                        ) {
+                            message.push(' ');
+                            message.push_str(label);
+                        }
+                        self.chat_widget.add_info_message(message, /*hint*/ None);
+                    }
+                }
+                Ok(true)
+            }
             _ => Ok(false),
         }
     }
@@ -4536,8 +4702,13 @@ impl App {
             AppEvent::UpdateReasoningEffort(effort) => {
                 self.on_update_reasoning_effort(effort);
             }
-            AppEvent::UpdateModelProvider(model_provider_id) => {
-                self.chat_widget.set_model_provider(&model_provider_id);
+            AppEvent::StageModelSelection {
+                provider_id,
+                model,
+                effort,
+            } => {
+                self.chat_widget
+                    .stage_model_selection(provider_id.as_deref(), &model, effort);
             }
             AppEvent::UpdateModel(model) => {
                 self.chat_widget.set_model(&model);
@@ -4966,22 +5137,6 @@ impl App {
                         tracing::info!(
                             "Selected provider: {target_provider}, model: {model}, effort: {effort_label}"
                         );
-                        let provider_changed = target_provider != self.config.model_provider_id;
-                        let mut message = if provider_changed {
-                            format!("Switched to {target_provider} / {model}")
-                        } else {
-                            format!("Model changed to {model}")
-                        };
-                        if let Some(label) = Self::reasoning_label_for(&model, effort) {
-                            message.push(' ');
-                            message.push_str(label);
-                        }
-                        if let Some(profile) = profile.as_deref() {
-                            message.push_str(" for ");
-                            message.push_str(profile);
-                            message.push_str(" profile");
-                        }
-                        self.chat_widget.add_info_message(message, /*hint*/ None);
                     }
                     Err(err) => {
                         tracing::error!(

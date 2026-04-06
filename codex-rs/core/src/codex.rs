@@ -1923,7 +1923,7 @@ impl Session {
             network_proxy,
             network_approval: Arc::clone(&network_approval),
             state_db: state_db_ctx.clone(),
-            model_client: ModelClient::new(
+            model_client: RwLock::new(ModelClient::new(
                 Some(Arc::clone(&auth_manager)),
                 conversation_id,
                 session_configuration.provider.clone(),
@@ -1932,7 +1932,7 @@ impl Session {
                 config.features.enabled(Feature::EnableRequestCompression),
                 config.features.enabled(Feature::RuntimeMetrics),
                 Self::build_model_client_beta_features_header(config.as_ref()),
-            ),
+            )),
             code_mode_service: crate::tools::code_mode::CodeModeService::new(
                 config.js_repl_node_path.clone(),
             ),
@@ -2371,8 +2371,24 @@ impl Session {
                 let next_cwd = updated.cwd.clone();
                 let codex_home = updated.codex_home.clone();
                 let session_source = updated.session_source.clone();
-                state.session_configuration = updated;
+                let provider_changed = updates.model_provider_id.is_some();
+                state.session_configuration = updated.clone();
                 drop(state);
+
+                if provider_changed {
+                    let config = Arc::clone(&updated.original_config_do_not_use);
+                    let rebuilt_model_client = ModelClient::new(
+                        Some(Arc::clone(&self.services.auth_manager)),
+                        self.conversation_id,
+                        updated.provider.clone(),
+                        updated.session_source.clone(),
+                        config.model_verbosity,
+                        config.features.enabled(Feature::EnableRequestCompression),
+                        config.features.enabled(Feature::RuntimeMetrics),
+                        Self::build_model_client_beta_features_header(config.as_ref()),
+                    );
+                    *self.services.model_client.write().await = rebuilt_model_client;
+                }
 
                 self.maybe_refresh_shell_snapshot_for_cwd(
                     &previous_cwd,
@@ -5956,8 +5972,11 @@ pub(crate) async fn run_turn(
 
     // `ModelClientSession` is turn-scoped and caches WebSocket + sticky routing state, so we reuse
     // one instance across retries within this turn.
-    let mut client_session =
-        prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());
+    let mut client_session = if let Some(prewarmed_client_session) = prewarmed_client_session {
+        prewarmed_client_session
+    } else {
+        sess.services.model_client.read().await.new_session()
+    };
 
     loop {
         if run_pending_session_start_hooks(&sess, &turn_context).await {
@@ -6637,7 +6656,12 @@ async fn run_sampling_request(
             // transient reconnect messages. In debug builds, keep full visibility for diagnosis.
             let report_error = retries > 1
                 || cfg!(debug_assertions)
-                || !sess.services.model_client.responses_websocket_enabled();
+                || !sess
+                    .services
+                    .model_client
+                    .read()
+                    .await
+                    .responses_websocket_enabled();
             if report_error {
                 // Surface retry information to any UI/front‑end so the
                 // user understands what is happening instead of staring

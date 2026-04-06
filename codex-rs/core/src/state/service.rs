@@ -55,7 +55,7 @@ pub(crate) struct SessionServices {
     pub(crate) network_approval: Arc<NetworkApprovalService>,
     pub(crate) state_db: Option<StateDbHandle>,
     /// Session-scoped model client shared across turns.
-    pub(crate) model_client: ModelClient,
+    pub(crate) model_client: RwLock<ModelClient>,
     pub(crate) code_mode_service: CodeModeService,
     pub(crate) environment: Arc<Environment>,
 }

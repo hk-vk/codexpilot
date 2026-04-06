@@ -26,6 +26,9 @@ approvalsReviewer?: ApprovalsReviewer | null, /**
  * Override the sandbox policy for this turn and subsequent turns.
  */
 sandboxPolicy?: SandboxPolicy | null, /**
+ * Override the model provider for this turn and subsequent turns.
+ */
+modelProvider?: string | null, /**
  * Override the model for this turn and subsequent turns.
  */
 model?: string | null, /**

@@ -54,6 +54,8 @@ use codex_app_server_protocol::ThreadShellCommandParams;
 use codex_app_server_protocol::ThreadShellCommandResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
+use codex_app_server_protocol::ThreadTurnContextOverrideParams;
+use codex_app_server_protocol::ThreadTurnContextOverrideResponse;
 use codex_app_server_protocol::ThreadUnsubscribeParams;
 use codex_app_server_protocol::ThreadUnsubscribeResponse;
 use codex_app_server_protocol::Turn;
@@ -429,6 +431,7 @@ impl AppServerSession {
         approval_policy: AskForApproval,
         approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
         sandbox_policy: SandboxPolicy,
+        model_provider: Option<String>,
         model: String,
         effort: Option<codex_protocol::openai_models::ReasoningEffort>,
         summary: Option<codex_protocol::config_types::ReasoningSummary>,
@@ -448,6 +451,7 @@ impl AppServerSession {
                     approval_policy: Some(approval_policy.into()),
                     approvals_reviewer: Some(approvals_reviewer.into()),
                     sandbox_policy: Some(sandbox_policy.into()),
+                    model_provider,
                     model: Some(model),
                     service_tier,
                     effort,
@@ -459,6 +463,49 @@ impl AppServerSession {
             })
             .await
             .wrap_err("turn/start failed in TUI")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn thread_turn_context_override(
+        &mut self,
+        thread_id: ThreadId,
+        cwd: Option<PathBuf>,
+        approval_policy: Option<codex_protocol::protocol::AskForApproval>,
+        approvals_reviewer: Option<codex_protocol::config_types::ApprovalsReviewer>,
+        sandbox_policy: Option<SandboxPolicy>,
+        windows_sandbox_level: Option<codex_protocol::config_types::WindowsSandboxLevel>,
+        model_provider: Option<String>,
+        model: Option<String>,
+        effort: Option<Option<codex_protocol::openai_models::ReasoningEffort>>,
+        summary: Option<codex_protocol::config_types::ReasoningSummary>,
+        service_tier: Option<Option<codex_protocol::config_types::ServiceTier>>,
+        collaboration_mode: Option<codex_protocol::config_types::CollaborationMode>,
+        personality: Option<codex_protocol::config_types::Personality>,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadTurnContextOverrideResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadTurnContextOverride {
+                request_id,
+                params: ThreadTurnContextOverrideParams {
+                    thread_id: thread_id.to_string(),
+                    cwd,
+                    approval_policy: approval_policy.map(Into::into),
+                    approvals_reviewer: approvals_reviewer.map(Into::into),
+                    sandbox_policy: sandbox_policy.map(Into::into),
+                    windows_sandbox_level,
+                    model_provider,
+                    model,
+                    service_tier,
+                    effort,
+                    summary,
+                    personality,
+                    collaboration_mode,
+                },
+            })
+            .await
+            .wrap_err("thread/turnContext/override failed in TUI")?;
+        Ok(())
     }
 
     pub(crate) async fn turn_interrupt(

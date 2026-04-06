@@ -9324,6 +9324,13 @@
               "integer",
               "null"
             ]
+          },
+          "modelProvider": {
+            "description": "Optional provider whose models should be listed instead of the active provider.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "title": "ModelListParams",
@@ -14554,6 +14561,13 @@
           },
           "model": {
             "description": "Override the model for this turn and subsequent turns.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modelProvider": {
+            "description": "Override the model provider for this turn and subsequent turns.",
             "type": [
               "string",
               "null"
