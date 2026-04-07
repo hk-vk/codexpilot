@@ -5196,6 +5196,9 @@ impl ChatWidget {
             SlashCommand::Quit | SlashCommand::Exit => {
                 self.request_quit_without_confirmation();
             }
+            SlashCommand::Login => {
+                self.app_event_tx.send(AppEvent::OpenLoginFlow);
+            }
             SlashCommand::Logout => {
                 self.open_logout_popup();
             }

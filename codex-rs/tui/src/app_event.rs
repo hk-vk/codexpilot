@@ -310,6 +310,9 @@ pub(crate) enum AppEvent {
         personality: Personality,
     },
 
+    /// Open the in-session login flow.
+    OpenLoginFlow,
+
     /// Remove locally stored Codex credentials.
     LogoutCodexAuth,
 

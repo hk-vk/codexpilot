@@ -41,6 +41,8 @@ use crate::multi_agents::agent_picker_status_dot_spans;
 use crate::multi_agents::format_agent_picker_item_name;
 use crate::multi_agents::next_agent_shortcut_matches;
 use crate::multi_agents::previous_agent_shortcut_matches;
+use crate::onboarding::onboarding_screen::OnboardingScreenArgs;
+use crate::onboarding::onboarding_screen::run_onboarding_app;
 use crate::pager_overlay::Overlay;
 use crate::read_session_model;
 use crate::render::highlight::highlight_bash_to_lines;
@@ -4346,6 +4348,94 @@ impl App {
                 }
 
                 // Leaving alt-screen may blank the inline viewport; force a redraw either way.
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::OpenLoginFlow => {
+                let login_app_server = match crate::start_app_server_for_picker(
+                    &self.config,
+                    &match self.remote_app_server_url.clone() {
+                        Some(websocket_url) => crate::AppServerTarget::Remote {
+                            websocket_url,
+                            auth_token: self.remote_app_server_auth_token.clone(),
+                        },
+                        None => crate::AppServerTarget::Embedded,
+                    },
+                )
+                .await
+                {
+                    Ok(app_server) => app_server,
+                    Err(err) => {
+                        self.chat_widget
+                            .add_error_message(format!("Failed to start login flow: {err}"));
+                        return Ok(AppRunControl::Continue);
+                    }
+                };
+                let mut login_app_server = login_app_server;
+                let login_status =
+                    match crate::get_login_status(&mut login_app_server, &self.config).await {
+                        Ok(login_status) => login_status,
+                        Err(err) => {
+                            self.chat_widget
+                                .add_error_message(format!("Failed to read login state: {err}"));
+                            return Ok(AppRunControl::Continue);
+                        }
+                    };
+                let login_request_handle = login_app_server.request_handle();
+                let onboarding_result = run_onboarding_app(
+                    OnboardingScreenArgs {
+                        show_welcome_screen: false,
+                        show_trust_screen: false,
+                        show_login_screen: true,
+                        login_status,
+                        app_server_request_handle: Some(login_request_handle),
+                        config: self.config.clone(),
+                        exit_on_cancel: false,
+                    },
+                    Some(login_app_server),
+                    tui,
+                )
+                .await?;
+
+                if onboarding_result.should_exit {
+                    return Ok(AppRunControl::Continue);
+                }
+
+                match app_server.bootstrap(&self.config).await {
+                    Ok(bootstrap) => {
+                        self.chat_widget.update_account_state(
+                            bootstrap.status_account_display,
+                            bootstrap.plan_type,
+                            bootstrap.has_chatgpt_account,
+                        );
+                        self.provider_model_presets.clear();
+                    }
+                    Err(err) => {
+                        self.chat_widget.add_error_message(format!(
+                            "Login completed, but refreshing account state failed: {err}"
+                        ));
+                    }
+                }
+
+                match crate::reconcile_github_copilot_provider_on_startup(
+                    &self.config,
+                    self.active_profile.as_deref(),
+                )
+                .await
+                {
+                    Ok(true) => {
+                        self.chat_widget.add_info_message(
+                            "Added the GitHub Copilot provider to config.toml. Restart codexpilot if you want /model to pick it up immediately.".to_string(),
+                            /*hint*/ None,
+                        );
+                    }
+                    Ok(false) => {}
+                    Err(err) => {
+                        self.chat_widget.add_error_message(format!(
+                            "Login completed, but updating the GitHub Copilot provider config failed: {err}"
+                        ));
+                    }
+                }
+
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::ForkCurrentSession => {

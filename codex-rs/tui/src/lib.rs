@@ -1044,6 +1044,7 @@ async fn run_ratatui_app(
         let show_login_screen = should_show_login_screen(login_status, &initial_config);
         let onboarding_result = run_onboarding_app(
             OnboardingScreenArgs {
+                show_welcome_screen: true,
                 show_login_screen,
                 show_trust_screen: should_show_trust_screen_flag,
                 login_status,
@@ -1051,6 +1052,7 @@ async fn run_ratatui_app(
                     .as_ref()
                     .map(AppServerSession::request_handle),
                 config: initial_config.clone(),
+                exit_on_cancel: true,
             },
             if show_login_screen {
                 onboarding_app_server.take()
@@ -1661,7 +1663,7 @@ fn ensure_github_copilot_provider_config(
     Ok(true)
 }
 
-async fn reconcile_github_copilot_provider_on_startup(
+pub(crate) async fn reconcile_github_copilot_provider_on_startup(
     config: &Config,
     active_profile: Option<&str>,
 ) -> color_eyre::Result<bool> {
@@ -1676,7 +1678,7 @@ async fn reconcile_github_copilot_provider_on_startup(
     Ok(wrote_provider)
 }
 
-async fn get_login_status(
+pub(crate) async fn get_login_status(
     app_server: &mut AppServerSession,
     config: &Config,
 ) -> color_eyre::Result<LoginStatus> {
@@ -1769,7 +1771,7 @@ fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool 
         return false;
     }
 
-    !login_status.is_fully_authenticated()
+    !login_status.is_any_authenticated()
 }
 
 #[cfg(test)]
@@ -2016,6 +2018,20 @@ mod tests {
         let login_status = LoginStatus {
             codex_auth_mode: None,
             github_copilot_authenticated: true,
+        };
+
+        assert!(!should_show_login_screen(login_status, &config));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn openai_provider_hides_login_screen_after_chatgpt_sign_in() -> std::io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = build_config(&temp_dir).await?;
+
+        let login_status = LoginStatus {
+            codex_auth_mode: Some(AppServerAuthMode::Chatgpt),
+            github_copilot_authenticated: false,
         };
 
         assert!(!should_show_login_screen(login_status, &config));

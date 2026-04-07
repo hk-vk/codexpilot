@@ -61,14 +61,17 @@ pub(crate) struct OnboardingScreen {
     steps: Vec<Step>,
     is_done: bool,
     should_exit: bool,
+    exit_on_cancel: bool,
 }
 
 pub(crate) struct OnboardingScreenArgs {
+    pub show_welcome_screen: bool,
     pub show_trust_screen: bool,
     pub show_login_screen: bool,
     pub login_status: LoginStatus,
     pub app_server_request_handle: Option<AppServerRequestHandle>,
     pub config: Config,
+    pub exit_on_cancel: bool,
 }
 
 pub(crate) struct OnboardingResult {
@@ -79,11 +82,13 @@ pub(crate) struct OnboardingResult {
 impl OnboardingScreen {
     pub(crate) fn new(tui: &mut Tui, args: OnboardingScreenArgs) -> Self {
         let OnboardingScreenArgs {
+            show_welcome_screen,
             show_trust_screen,
             show_login_screen,
             login_status,
             app_server_request_handle,
             config,
+            exit_on_cancel,
         } = args;
         let cwd = config.cwd.to_path_buf();
         let forced_chatgpt_workspace_id = config.forced_chatgpt_workspace_id.clone();
@@ -97,12 +102,14 @@ impl OnboardingScreen {
             "Codex"
         };
         let mut steps: Vec<Step> = Vec::new();
-        steps.push(Step::Welcome(WelcomeWidget::new(
-            login_status.is_any_authenticated(),
-            product_name,
-            tui.frame_requester(),
-            config.animations,
-        )));
+        if show_welcome_screen {
+            steps.push(Step::Welcome(WelcomeWidget::new(
+                login_status.is_any_authenticated(),
+                product_name,
+                tui.frame_requester(),
+                config.animations,
+            )));
+        }
         if show_login_screen {
             let highlighted_mode = match forced_login_method {
                 Some(ForcedLoginMethod::Api) => SignInOption::ApiKey,
@@ -124,6 +131,7 @@ impl OnboardingScreen {
                     current_app_is_codexpilot,
                     github_copilot_completes_onboarding: config.model_provider_id
                         == "github-copilot",
+                    always_show_sign_in_picker: !show_welcome_screen,
                     product_name,
                     animations_enabled: config.animations,
                 }));
@@ -154,6 +162,7 @@ impl OnboardingScreen {
             steps,
             is_done: false,
             should_exit: false,
+            exit_on_cancel,
         }
     }
 
@@ -291,10 +300,8 @@ impl KeyboardHandler for OnboardingScreen {
         if should_quit {
             if self.is_auth_in_progress() {
                 self.cancel_auth_if_active();
-                // If the user cancels the auth menu, exit the app rather than
-                // leave the user at a prompt in an unauthed state.
-                self.should_exit = true;
             }
+            self.should_exit = self.exit_on_cancel;
             self.is_done = true;
         } else {
             if let Some(Step::Welcome(widget)) = self

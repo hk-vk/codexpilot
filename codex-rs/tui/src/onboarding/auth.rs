@@ -181,6 +181,8 @@ impl KeyboardHandler for AuthModeWidget {
                     SignInState::GitHubCopilotSuccessMessage => {
                         let next_state = if self.current_app_is_codexpilot
                             || self.github_copilot_completes_onboarding
+                            || self.login_status.is_codex_authenticated()
+                            || self.always_show_sign_in_picker
                         {
                             SignInState::GitHubCopilotSuccess
                         } else {
@@ -219,6 +221,7 @@ pub(crate) struct AuthModeWidget {
     pub forced_login_method: Option<ForcedLoginMethod>,
     pub current_app_is_codexpilot: bool,
     pub github_copilot_completes_onboarding: bool,
+    pub always_show_sign_in_picker: bool,
     pub product_name: &'static str,
     pub animations_enabled: bool,
 }
@@ -1052,11 +1055,26 @@ impl AuthModeWidget {
 
 impl StepStateProvider for AuthModeWidget {
     fn get_step_state(&self) -> StepState {
+        let sign_in_state = self.sign_in_state.read().unwrap();
+        if self.always_show_sign_in_picker {
+            return match &*sign_in_state {
+                SignInState::ChatGptSuccess
+                | SignInState::GitHubCopilotSuccess
+                | SignInState::ApiKeyConfigured => StepState::Complete,
+                SignInState::PickMode
+                | SignInState::ApiKeyEntry(_)
+                | SignInState::ChatGptContinueInBrowser(_)
+                | SignInState::ChatGptDeviceCode(_)
+                | SignInState::ChatGptSuccessMessage
+                | SignInState::GitHubCopilotDeviceCode(_)
+                | SignInState::GitHubCopilotSuccessMessage => StepState::InProgress,
+            };
+        }
+
         if self.login_status.is_fully_authenticated() {
             return StepState::Complete;
         }
 
-        let sign_in_state = self.sign_in_state.read().unwrap();
         match &*sign_in_state {
             SignInState::ChatGptSuccessMessage | SignInState::ChatGptSuccess => {
                 if self.has_github_copilot_login() {
@@ -1194,6 +1212,7 @@ mod tests {
             forced_login_method: Some(ForcedLoginMethod::Chatgpt),
             current_app_is_codexpilot: false,
             github_copilot_completes_onboarding: false,
+            always_show_sign_in_picker: false,
             product_name: "Codex",
             animations_enabled: true,
         };
@@ -1245,6 +1264,20 @@ mod tests {
             &*widget.sign_in_state.read().unwrap(),
             SignInState::ChatGptSuccess
         ));
+    }
+
+    #[tokio::test]
+    async fn modal_login_flow_keeps_picker_open_until_user_acts() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.always_show_sign_in_picker = true;
+        widget.login_status.codex_auth_mode = Some(AppServerAuthMode::Chatgpt);
+        widget.login_status.github_copilot_authenticated = true;
+
+        assert_eq!(widget.get_step_state(), StepState::InProgress);
+
+        *widget.sign_in_state.write().unwrap() = SignInState::ChatGptSuccess;
+
+        assert_eq!(widget.get_step_state(), StepState::Complete);
     }
 
     #[tokio::test]
