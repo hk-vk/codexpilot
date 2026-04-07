@@ -1151,40 +1151,52 @@ pub(crate) fn new_session_info(
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
     if is_first_event {
-        // Help lines below the header (new copy and list)
-        let help_lines: Vec<Line<'static>> = vec![
-            "  To get started, describe a task or try one of these commands:"
-                .dim()
-                .into(),
-            Line::from(""),
-            Line::from(vec![
-                "  ".into(),
-                "/init".into(),
-                " - create an AGENTS.md file with instructions for Codex".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/status".into(),
-                " - show current session configuration".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/permissions".into(),
-                " - choose what Codex is allowed to do".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/model".into(),
-                " - choose what model and reasoning effort to use".dim(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "/review".into(),
-                " - review any changes and find issues".dim(),
-            ]),
-        ];
+        if config.show_tooltips
+            && let Some(announcement) = tooltips::announcement::fetch_announcement_tip()
+                .map(|tip| TooltipHistoryCell::new(tip, &config.cwd))
+        {
+            parts.push(Box::new(announcement));
+        } else {
+            // Help lines below the header (new copy and list)
+            let help_lines: Vec<Line<'static>> = vec![
+                "  To get started, describe a task or try one of these commands:"
+                    .dim()
+                    .into(),
+                Line::from(""),
+                Line::from(vec![
+                    "  ".into(),
+                    "/init".into(),
+                    " - create an AGENTS.md file with instructions for Codex".dim(),
+                ]),
+                Line::from(vec![
+                    "  ".into(),
+                    "/status".into(),
+                    " - show current session configuration".dim(),
+                ]),
+                Line::from(vec![
+                    "  ".into(),
+                    "/permissions".into(),
+                    " - choose what Codex is allowed to do".dim(),
+                ]),
+                Line::from(vec![
+                    "  ".into(),
+                    "/model".into(),
+                    " - choose what model and reasoning effort to use".dim(),
+                ]),
+                Line::from(vec![
+                    "  ".into(),
+                    "/login".into(),
+                    " - sign in to ChatGPT, GitHub Copilot, or an API key".dim(),
+                ]),
+                Line::from(vec![
+                    "  ".into(),
+                    "/review".into(),
+                    " - review any changes and find issues".dim(),
+                ]),
+            ];
 
-        parts.push(Box::new(PlainHistoryCell { lines: help_lines }));
+            parts.push(Box::new(PlainHistoryCell { lines: help_lines }));
+        }
     } else {
         if config.show_tooltips
             && let Some(tooltips) = tooltip_override
