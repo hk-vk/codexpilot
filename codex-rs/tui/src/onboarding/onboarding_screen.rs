@@ -90,15 +90,23 @@ impl OnboardingScreen {
         let forced_login_method = config.forced_login_method;
         let codex_home = config.codex_home.clone();
         let cli_auth_credentials_store_mode = config.cli_auth_credentials_store_mode;
+        let current_app_is_codexpilot = codex_utils_home_dir::current_app_is_codexpilot();
+        let product_name = if current_app_is_codexpilot {
+            "codexpilot"
+        } else {
+            "Codex"
+        };
         let mut steps: Vec<Step> = Vec::new();
         steps.push(Step::Welcome(WelcomeWidget::new(
             login_status.is_any_authenticated(),
+            product_name,
             tui.frame_requester(),
             config.animations,
         )));
         if show_login_screen {
             let highlighted_mode = match forced_login_method {
                 Some(ForcedLoginMethod::Api) => SignInOption::ApiKey,
+                _ if current_app_is_codexpilot => SignInOption::GitHubCopilot,
                 _ => SignInOption::ChatGpt,
             };
             if let Some(app_server_request_handle) = app_server_request_handle {
@@ -113,6 +121,10 @@ impl OnboardingScreen {
                     app_server_request_handle,
                     forced_chatgpt_workspace_id,
                     forced_login_method,
+                    current_app_is_codexpilot,
+                    github_copilot_completes_onboarding: config.model_provider_id
+                        == "github-copilot",
+                    product_name,
                     animations_enabled: config.animations,
                 }));
             } else {

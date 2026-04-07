@@ -99,6 +99,7 @@ pub(crate) enum SignInState {
     ChatGptSuccessMessage,
     ChatGptSuccess,
     GitHubCopilotDeviceCode(GitHubCopilotDeviceCodeState),
+    GitHubCopilotSuccessMessage,
     GitHubCopilotSuccess,
     ApiKeyEntry(ApiKeyInputState),
     ApiKeyConfigured,
@@ -177,6 +178,16 @@ impl KeyboardHandler for AuthModeWidget {
                     SignInState::ChatGptSuccessMessage => {
                         *self.sign_in_state.write().unwrap() = SignInState::ChatGptSuccess;
                     }
+                    SignInState::GitHubCopilotSuccessMessage => {
+                        let next_state = if self.current_app_is_codexpilot
+                            || self.github_copilot_completes_onboarding
+                        {
+                            SignInState::GitHubCopilotSuccess
+                        } else {
+                            SignInState::PickMode
+                        };
+                        *self.sign_in_state.write().unwrap() = next_state;
+                    }
                     _ => {}
                 }
             }
@@ -206,6 +217,9 @@ pub(crate) struct AuthModeWidget {
     pub app_server_request_handle: AppServerRequestHandle,
     pub forced_chatgpt_workspace_id: Option<String>,
     pub forced_login_method: Option<ForcedLoginMethod>,
+    pub current_app_is_codexpilot: bool,
+    pub github_copilot_completes_onboarding: bool,
+    pub product_name: &'static str,
     pub animations_enabled: bool,
 }
 
@@ -262,26 +276,30 @@ impl AuthModeWidget {
     }
 
     fn displayed_sign_in_options(&self) -> Vec<SignInOption> {
-        let mut options = vec![SignInOption::GitHubCopilot];
-        if self.is_chatgpt_login_allowed() {
-            options.push(SignInOption::ChatGpt);
-            options.push(SignInOption::DeviceCode);
-        }
-        if self.is_api_login_allowed() {
-            options.push(SignInOption::ApiKey);
-        }
-        options
+        self.ordered_sign_in_options()
     }
 
     fn selectable_sign_in_options(&self) -> Vec<SignInOption> {
-        let mut options = vec![SignInOption::GitHubCopilot];
+        self.ordered_sign_in_options()
+    }
+
+    fn ordered_sign_in_options(&self) -> Vec<SignInOption> {
+        let mut options = Vec::new();
+
+        if self.current_app_is_codexpilot {
+            options.push(SignInOption::GitHubCopilot);
+        }
         if self.is_chatgpt_login_allowed() {
             options.push(SignInOption::ChatGpt);
             options.push(SignInOption::DeviceCode);
         }
+        if !self.current_app_is_codexpilot {
+            options.push(SignInOption::GitHubCopilot);
+        }
         if self.is_api_login_allowed() {
             options.push(SignInOption::ApiKey);
         }
+
         options
     }
 
@@ -343,11 +361,23 @@ impl AuthModeWidget {
         let mut lines: Vec<Line> = vec![
             Line::from(vec![
                 "  ".into(),
-                "Sign in with Codex and GitHub Copilot to unlock both auth flows".into(),
+                if self.current_app_is_codexpilot {
+                    format!(
+                        "Sign in to {} with GitHub Copilot, ChatGPT, or an API key",
+                        self.product_name
+                    )
+                    .into()
+                } else {
+                    "Sign in with Codex and GitHub Copilot to unlock both auth flows".into()
+                },
             ]),
             Line::from(vec![
                 "  ".into(),
-                "or connect an API key for usage-based billing".into(),
+                if self.current_app_is_codexpilot {
+                    "Choose the auth flow you want to use in the CLI".into()
+                } else {
+                    "or connect an API key for usage-based billing".into()
+                },
             ]),
             "".into(),
         ];
@@ -506,14 +536,18 @@ impl AuthModeWidget {
             "".into(),
             "  Before you start:".into(),
             "".into(),
-            "  Decide how much autonomy you want to grant Codex".into(),
+            format!(
+                "  Decide how much autonomy you want to grant {}",
+                self.product_name
+            )
+            .into(),
             Line::from(vec![
                 "  For more details see the ".into(),
                 "\u{1b}]8;;https://developers.openai.com/codex/security\u{7}Codex docs\u{1b}]8;;\u{7}".underlined(),
             ])
             .dim(),
             "".into(),
-            "  Codex can make mistakes".into(),
+            format!("  {} can make mistakes", self.product_name).into(),
             "  Review the code it writes and commands it runs".dim().into(),
             "".into(),
             "  Powered by your ChatGPT account".into(),
@@ -584,6 +618,8 @@ impl AuthModeWidget {
             "✓ Signed in with GitHub Copilot".fg(Color::Green).into(),
             "".into(),
             "  GitHub Copilot models and token-backed auth are ready.".into(),
+            "".into(),
+            "  Press Enter to continue".fg(Color::Cyan).into(),
         ];
 
         Paragraph::new(lines)
@@ -595,7 +631,11 @@ impl AuthModeWidget {
         let lines = vec![
             "✓ API key configured".fg(Color::Green).into(),
             "".into(),
-            "  Codex will use usage-based billing with your API key.".into(),
+            format!(
+                "  {} will use usage-based billing with your API key.",
+                self.product_name
+            )
+            .into(),
         ];
 
         Paragraph::new(lines)
@@ -846,7 +886,8 @@ impl AuthModeWidget {
 
     fn handle_existing_github_copilot_login(&mut self) -> bool {
         if self.has_github_copilot_login() {
-            *self.sign_in_state.write().unwrap() = SignInState::GitHubCopilotSuccess;
+            self.login_status.github_copilot_authenticated = true;
+            *self.sign_in_state.write().unwrap() = SignInState::GitHubCopilotSuccessMessage;
             self.request_frame.schedule_frame();
             true
         } else {
@@ -964,7 +1005,7 @@ impl AuthModeWidget {
             match result {
                 Ok(()) => {
                     *error.write().unwrap() = None;
-                    *sign_in_state.write().unwrap() = SignInState::GitHubCopilotSuccess;
+                    *sign_in_state.write().unwrap() = SignInState::GitHubCopilotSuccessMessage;
                 }
                 Err(err) => {
                     *sign_in_state.write().unwrap() = SignInState::PickMode;
@@ -1024,8 +1065,12 @@ impl StepStateProvider for AuthModeWidget {
                     StepState::InProgress
                 }
             }
+            SignInState::GitHubCopilotSuccessMessage => StepState::InProgress,
             SignInState::GitHubCopilotSuccess => {
-                if self.login_status.is_codex_authenticated() {
+                if self.current_app_is_codexpilot
+                    || self.github_copilot_completes_onboarding
+                    || self.login_status.is_codex_authenticated()
+                {
                     StepState::Complete
                 } else {
                     StepState::InProgress
@@ -1062,6 +1107,9 @@ impl WidgetRef for AuthModeWidget {
             }
             SignInState::ChatGptSuccess => {
                 self.render_chatgpt_success(area, buf);
+            }
+            SignInState::GitHubCopilotSuccessMessage => {
+                self.render_github_copilot_success(area, buf);
             }
             SignInState::GitHubCopilotSuccess => {
                 self.render_github_copilot_success(area, buf);
@@ -1144,6 +1192,9 @@ mod tests {
             app_server_request_handle: AppServerRequestHandle::InProcess(client.request_handle()),
             forced_chatgpt_workspace_id: None,
             forced_login_method: Some(ForcedLoginMethod::Chatgpt),
+            current_app_is_codexpilot: false,
+            github_copilot_completes_onboarding: false,
+            product_name: "Codex",
             animations_enabled: true,
         };
         (widget, codex_home)
@@ -1206,13 +1257,14 @@ mod tests {
         assert_eq!(handled, true);
         assert!(matches!(
             &*widget.sign_in_state.read().unwrap(),
-            SignInState::GitHubCopilotSuccess
+            SignInState::GitHubCopilotSuccessMessage
         ));
     }
 
     #[tokio::test]
-    async fn github_copilot_is_first_sign_in_option() {
-        let (widget, _tmp) = widget_forced_chatgpt().await;
+    async fn github_copilot_is_first_sign_in_option_for_codexpilot() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.current_app_is_codexpilot = true;
 
         assert_eq!(
             widget.displayed_sign_in_options().first(),
@@ -1221,6 +1273,20 @@ mod tests {
         assert_eq!(
             widget.selectable_sign_in_options().first(),
             Some(&SignInOption::GitHubCopilot)
+        );
+    }
+
+    #[tokio::test]
+    async fn github_copilot_is_after_chatgpt_for_non_codexpilot() {
+        let (widget, _tmp) = widget_forced_chatgpt().await;
+
+        assert_eq!(
+            widget.displayed_sign_in_options(),
+            vec![
+                SignInOption::ChatGpt,
+                SignInOption::DeviceCode,
+                SignInOption::GitHubCopilot,
+            ]
         );
     }
 

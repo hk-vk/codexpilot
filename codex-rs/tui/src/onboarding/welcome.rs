@@ -25,6 +25,7 @@ const MIN_ANIMATION_WIDTH: u16 = 60;
 
 pub(crate) struct WelcomeWidget {
     pub is_logged_in: bool,
+    product_name: &'static str,
     animation: AsciiAnimation,
     animations_enabled: bool,
     layout_area: Cell<Option<Rect>>,
@@ -48,11 +49,13 @@ impl KeyboardHandler for WelcomeWidget {
 impl WelcomeWidget {
     pub(crate) fn new(
         is_logged_in: bool,
+        product_name: &'static str,
         request_frame: FrameRequester,
         animations_enabled: bool,
     ) -> Self {
         Self {
             is_logged_in,
+            product_name,
             animation: AsciiAnimation::new(request_frame),
             animations_enabled,
             layout_area: Cell::new(None),
@@ -83,12 +86,22 @@ impl WidgetRef for &WelcomeWidget {
             lines.extend(frame.lines().map(Into::into));
             lines.push("".into());
         }
-        lines.push(Line::from(vec![
-            "  ".into(),
-            "Welcome to ".into(),
-            "Codex".bold(),
-            ", OpenAI's command-line coding agent".into(),
-        ]));
+        if self.product_name == "codexpilot" {
+            lines.push(Line::from(vec![
+                "  ".into(),
+                "Welcome to ".into(),
+                self.product_name.bold(),
+                ", a fork of OpenAI Codex CLI".into(),
+            ]));
+            lines.push("  Bring your GitHub Copilot subscription to sign in.".into());
+        } else {
+            lines.push(Line::from(vec![
+                "  ".into(),
+                "Welcome to ".into(),
+                self.product_name.bold(),
+                ", OpenAI's command-line coding agent".into(),
+            ]));
+        }
 
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -130,6 +143,7 @@ mod tests {
     fn welcome_renders_animation_on_first_draw() {
         let widget = WelcomeWidget::new(
             /*is_logged_in*/ false,
+            "Codex",
             FrameRequester::test_dummy(),
             /*animations_enabled*/ true,
         );
@@ -146,6 +160,7 @@ mod tests {
     fn welcome_skips_animation_below_height_breakpoint() {
         let widget = WelcomeWidget::new(
             /*is_logged_in*/ false,
+            "Codex",
             FrameRequester::test_dummy(),
             /*animations_enabled*/ true,
         );
@@ -161,6 +176,7 @@ mod tests {
     fn ctrl_dot_changes_animation_variant() {
         let mut widget = WelcomeWidget {
             is_logged_in: false,
+            product_name: "Codex",
             animation: AsciiAnimation::with_variants(
                 FrameRequester::test_dummy(),
                 &VARIANTS,
