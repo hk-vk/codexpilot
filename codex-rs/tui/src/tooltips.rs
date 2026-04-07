@@ -130,6 +130,7 @@ pub(crate) mod announcement {
     use std::time::Duration;
 
     static ANNOUNCEMENT_TIP: OnceLock<Option<String>> = OnceLock::new();
+    const TEST_ANNOUNCEMENT_CONTENT: &str = "This is a test announcement";
 
     /// Prewarm the cache of the announcement tip.
     pub(crate) fn prewarm() {
@@ -214,7 +215,7 @@ pub(crate) mod announcement {
     impl AnnouncementTip {
         fn from_raw(raw: AnnouncementTipRaw) -> Option<Self> {
             let content = raw.content.trim();
-            if content.is_empty() {
+            if content.is_empty() || content == TEST_ANNOUNCEMENT_CONTENT {
                 return None;
             }
 
@@ -407,9 +408,6 @@ version_regex = "^0\\.0\\.0$"
 content = "This is a test announcement"
         "#;
 
-        assert_eq!(
-            Some("This is a test announcement".to_string()),
-            parse_announcement_tip_toml(toml)
-        );
+        assert_eq!(None, parse_announcement_tip_toml(toml));
     }
 }
