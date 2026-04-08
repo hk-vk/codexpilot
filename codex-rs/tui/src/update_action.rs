@@ -1,9 +1,9 @@
 /// Update action the CLI should perform after the TUI exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateAction {
-    /// Update via `npm install -g @openai/codex@latest`.
+    /// Update via `npm install -g codexpilot@latest`.
     NpmGlobalLatest,
-    /// Update via `bun install -g @openai/codex@latest`.
+    /// Update via `bun install -g codexpilot@latest`.
     BunGlobalLatest,
     /// Update via `brew upgrade codex`.
     BrewUpgrade,
@@ -13,8 +13,8 @@ impl UpdateAction {
     /// Returns the list of command-line arguments for invoking the update.
     pub fn command_args(self) -> (&'static str, &'static [&'static str]) {
         match self {
-            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "@openai/codex"]),
-            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "@openai/codex"]),
+            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "codexpilot"]),
+            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "codexpilot"]),
             UpdateAction::BrewUpgrade => ("brew", &["upgrade", "--cask", "codex"]),
         }
     }
@@ -43,8 +43,8 @@ pub(crate) fn get_update_action() -> Option<UpdateAction> {
 
 #[cfg(any(not(debug_assertions), test))]
 fn detect_update_action(
-    is_macos: bool,
-    current_exe: &std::path::Path,
+    _is_macos: bool,
+    _current_exe: &std::path::Path,
     managed_by_npm: bool,
     managed_by_bun: bool,
 ) -> Option<UpdateAction> {
@@ -52,10 +52,6 @@ fn detect_update_action(
         Some(UpdateAction::NpmGlobalLatest)
     } else if managed_by_bun {
         Some(UpdateAction::BunGlobalLatest)
-    } else if is_macos
-        && (current_exe.starts_with("/opt/homebrew") || current_exe.starts_with("/usr/local"))
-    {
-        Some(UpdateAction::BrewUpgrade)
     } else {
         None
     }
@@ -101,16 +97,7 @@ mod tests {
                 /*managed_by_npm*/ false,
                 /*managed_by_bun*/ false
             ),
-            Some(UpdateAction::BrewUpgrade)
-        );
-        assert_eq!(
-            detect_update_action(
-                /*is_macos*/ true,
-                std::path::Path::new("/usr/local/bin/codex"),
-                /*managed_by_npm*/ false,
-                /*managed_by_bun*/ false
-            ),
-            Some(UpdateAction::BrewUpgrade)
+            None
         );
     }
 }

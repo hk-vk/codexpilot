@@ -11,14 +11,16 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
+const UPDATE_PACKAGE_NAME = "codexpilot";
+const UPDATE_PACKAGE_DISPLAY_NAME = "CodexPilot";
 
 const PLATFORM_PACKAGE_BY_TARGET = {
-  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
-  "aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
-  "x86_64-apple-darwin": "@openai/codex-darwin-x64",
-  "aarch64-apple-darwin": "@openai/codex-darwin-arm64",
-  "x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
-  "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
+  "x86_64-unknown-linux-musl": "codexpilot-linux-x64",
+  "aarch64-unknown-linux-musl": "codexpilot-linux-arm64",
+  "x86_64-apple-darwin": "codexpilot-darwin-x64",
+  "aarch64-apple-darwin": "codexpilot-darwin-arm64",
+  "x86_64-pc-windows-msvc": "codexpilot-win32-x64",
+  "aarch64-pc-windows-msvc": "codexpilot-win32-arm64",
 };
 
 const { platform, arch } = process;
@@ -95,10 +97,10 @@ try {
     const packageManager = detectPackageManager();
     const updateCommand =
       packageManager === "bun"
-        ? "bun install -g @openai/codex@latest"
-        : "npm install -g @openai/codex@latest";
+        ? `bun install -g ${UPDATE_PACKAGE_NAME}@latest`
+        : `npm install -g ${UPDATE_PACKAGE_NAME}@latest`;
     throw new Error(
-      `Missing optional dependency ${platformPackage}. Reinstall Codex: ${updateCommand}`,
+      `Missing optional dependency ${platformPackage}. Reinstall ${UPDATE_PACKAGE_DISPLAY_NAME}: ${updateCommand}`,
     );
   }
 }
@@ -107,10 +109,10 @@ if (!vendorRoot) {
   const packageManager = detectPackageManager();
   const updateCommand =
     packageManager === "bun"
-      ? "bun install -g @openai/codex@latest"
-      : "npm install -g @openai/codex@latest";
+      ? `bun install -g ${UPDATE_PACKAGE_NAME}@latest`
+      : `npm install -g ${UPDATE_PACKAGE_NAME}@latest`;
   throw new Error(
-    `Missing optional dependency ${platformPackage}. Reinstall Codex: ${updateCommand}`,
+    `Missing optional dependency ${platformPackage}. Reinstall ${UPDATE_PACKAGE_DISPLAY_NAME}: ${updateCommand}`,
   );
 }
 
