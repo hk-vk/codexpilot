@@ -360,6 +360,23 @@ def stage_codex_sdk_sources(staging_dir: Path) -> None:
         shutil.copy2(license_src, staging_dir / "LICENSE")
 
 
+def validate_native_binary(binary_path: Path, target_name: str, component: str) -> None:
+    try:
+        file_output = subprocess.check_output(["file", str(binary_path)], text=True).strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return
+
+    if "unknown-linux-musl" in target_name:
+        if "ELF" not in file_output:
+            raise RuntimeError(
+                f"Native component '{component}' for target '{target_name}' is not an ELF binary: {binary_path}"
+            )
+        if "dynamically linked" in file_output or "ld-linux" in file_output:
+            raise RuntimeError(
+                f"Native component '{component}' for target '{target_name}' appears to be a glibc/dynamic binary instead of musl: {binary_path}\n{file_output}"
+            )
+
+
 def copy_native_binaries(
     vendor_src: Path,
     staging_dir: Path,
@@ -407,6 +424,22 @@ def copy_native_binaries(
             if dest_component_dir.exists():
                 shutil.rmtree(dest_component_dir)
             shutil.copytree(src_component_dir, dest_component_dir)
+
+            binary_name = component
+            if component == "codex":
+                binary_name = "codex"
+            elif component == "codex-responses-api-proxy":
+                binary_name = "codex-responses-api-proxy"
+            elif component == "codex-windows-sandbox-setup":
+                binary_name = "codex-windows-sandbox-setup"
+            elif component == "codex-command-runner":
+                binary_name = "codex-command-runner"
+            elif component == "rg":
+                binary_name = "rg"
+
+            binary_path = dest_component_dir / binary_name
+            if binary_path.exists():
+                validate_native_binary(binary_path, target_dir.name, component)
 
     if target_filter is not None:
         missing_targets = sorted(target_filter - copied_targets)

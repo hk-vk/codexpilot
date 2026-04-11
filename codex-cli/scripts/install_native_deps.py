@@ -165,25 +165,27 @@ def main() -> int:
         "codex-command-runner",
         "rg",
     ]
+    binary_component_names = [name for name in components if name in BINARY_COMPONENTS]
 
-    workflow_url = (args.workflow_url or DEFAULT_WORKFLOW_URL).strip()
-    if not workflow_url:
-        raise RuntimeError(
-            "No workflow URL provided. Pass --workflow-url like https://github.com/<owner>/<repo>/actions/runs/<id>."
-        )
-
-    repo, workflow_id = _workflow_repo_and_id(workflow_url)
-    print(f"Downloading native artifacts from workflow {workflow_id} in {repo}...")
-
-    with _gha_group(f"Download native artifacts from workflow {workflow_id} in {repo}"):
-        with tempfile.TemporaryDirectory(prefix="codex-native-artifacts-") as artifacts_dir_str:
-            artifacts_dir = Path(artifacts_dir_str)
-            _download_artifacts(workflow_url, artifacts_dir)
-            install_binary_components(
-                artifacts_dir,
-                vendor_dir,
-                [BINARY_COMPONENTS[name] for name in components if name in BINARY_COMPONENTS],
+    if binary_component_names:
+        workflow_url = (args.workflow_url or DEFAULT_WORKFLOW_URL).strip()
+        if not workflow_url:
+            raise RuntimeError(
+                "No workflow URL provided. Pass --workflow-url like https://github.com/<owner>/<repo>/actions/runs/<id>."
             )
+
+        repo, workflow_id = _workflow_repo_and_id(workflow_url)
+        print(f"Downloading native artifacts from workflow {workflow_id} in {repo}...")
+
+        with _gha_group(f"Download native artifacts from workflow {workflow_id} in {repo}"):
+            with tempfile.TemporaryDirectory(prefix="codex-native-artifacts-") as artifacts_dir_str:
+                artifacts_dir = Path(artifacts_dir_str)
+                _download_artifacts(workflow_url, artifacts_dir)
+                install_binary_components(
+                    artifacts_dir,
+                    vendor_dir,
+                    [BINARY_COMPONENTS[name] for name in binary_component_names],
+                )
 
     if "rg" in components:
         with _gha_group("Fetch ripgrep binaries"):
@@ -495,8 +497,17 @@ def extract_archive(
 
 
 def _load_manifest(manifest_path: Path) -> dict:
-    cmd = ["dotslash", "--", "parse", str(manifest_path)]
-    stdout = subprocess.check_output(cmd, text=True)
+    try:
+        stdout = subprocess.check_output(
+            ["dotslash", "--", "parse", str(manifest_path)],
+            text=True,
+        )
+    except FileNotFoundError:
+        raw = manifest_path.read_text(encoding="utf-8")
+        raw = raw.lstrip()
+        if raw.startswith("#!/usr/bin/env dotslash"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else ""
+        stdout = raw
     try:
         manifest = json.loads(stdout)
     except json.JSONDecodeError as exc:
