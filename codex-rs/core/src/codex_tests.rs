@@ -36,6 +36,63 @@ use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use tracing::Span;
 
+#[test]
+fn github_copilot_request_body_timeout_detection_is_provider_gated() {
+    let mut github_copilot_provider = ModelProviderInfo::create_openai_provider(Some(
+        "https://api.individual.githubcopilot.com/v1".to_string(),
+    ));
+    github_copilot_provider.name = "GitHub Copilot".to_string();
+
+    let err = CodexErr::UnexpectedStatus(UnexpectedResponseError {
+        status: reqwest::StatusCode::REQUEST_TIMEOUT,
+        body: "Timed out reading request body. Try again, or use a smaller request size."
+            .to_string(),
+        url: Some("https://api.individual.githubcopilot.com/responses".to_string()),
+        cf_ray: None,
+        request_id: Some("0".to_string()),
+        identity_authorization_error: None,
+        identity_error_code: None,
+    });
+
+    assert!(is_github_copilot_request_body_timeout(
+        &err,
+        &github_copilot_provider,
+    ));
+
+    let openai_provider = ModelProviderInfo::create_openai_provider(None);
+    assert!(!is_github_copilot_request_body_timeout(
+        &err,
+        &openai_provider
+    ));
+}
+
+#[tokio::test]
+async fn projected_prompt_token_count_includes_pending_turn_items() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.model_info.auto_compact_token_limit = Some(100);
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+
+    let baseline = session.get_total_token_usage().await;
+    let projected_input: ResponseItem = ResponseInputItem::from(vec![UserInput::Text {
+        text: "x".repeat(1_000),
+        text_elements: Vec::new(),
+    }])
+    .into();
+    let projected = projected_prompt_token_count(&session, &turn_context, &[projected_input])
+        .await
+        .expect("projected token estimate should be available");
+
+    assert!(
+        baseline < 100,
+        "baseline should stay below compact threshold"
+    );
+    assert!(
+        projected >= 100,
+        "projected turn should exceed compact threshold: baseline={baseline}, projected={projected}"
+    );
+}
+
 use crate::rollout::policy::EventPersistenceMode;
 use crate::rollout::recorder::RolloutRecorder;
 use crate::rollout::recorder::RolloutRecorderParams;
@@ -60,6 +117,7 @@ use codex_otel::TelemetryAuthMode;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
+use codex_protocol::error::UnexpectedResponseError;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::DeveloperInstructions;
@@ -2719,7 +2777,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             config.features.enabled(Feature::EnableRequestCompression),
             config.features.enabled(Feature::RuntimeMetrics),
             Session::build_model_client_beta_features_header(config.as_ref()),
-        ),
+        )
+        .into(),
         code_mode_service: crate::tools::code_mode::CodeModeService::new(
             config.js_repl_node_path.clone(),
         ),
@@ -3115,6 +3174,7 @@ async fn user_turn_updates_approvals_reviewer() {
             approvals_reviewer: Some(codex_config::types::ApprovalsReviewer::GuardianSubagent),
             sandbox_policy: config.permissions.sandbox_policy.get().clone(),
             model: turn_context.model_info.slug.clone(),
+            model_provider: None,
             effort: config.model_reasoning_effort,
             summary: config.model_reasoning_summary,
             service_tier: None,
@@ -3559,7 +3619,8 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
             config.features.enabled(Feature::EnableRequestCompression),
             config.features.enabled(Feature::RuntimeMetrics),
             Session::build_model_client_beta_features_header(config.as_ref()),
-        ),
+        )
+        .into(),
         code_mode_service: crate::tools::code_mode::CodeModeService::new(
             config.js_repl_node_path.clone(),
         ),

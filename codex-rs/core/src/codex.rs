@@ -191,6 +191,7 @@ use codex_config::types::ShellEnvironmentPolicy;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
+use codex_protocol::error::UnexpectedResponseError;
 #[cfg(test)]
 use codex_protocol::exec_output::StreamOutput;
 
@@ -5884,17 +5885,6 @@ pub(crate) async fn run_turn(
 
     let model_info = turn_context.model_info.clone();
     let auto_compact_limit = model_info.auto_compact_token_limit().unwrap_or(i64::MAX);
-    // TODO(ccunningham): Pre-turn compaction runs before context updates and the
-    // new user message are recorded. Estimate pending incoming items (context
-    // diffs/full reinjection + user input) and trigger compaction preemptively
-    // when they would push the thread over the compaction threshold.
-    if run_pre_sampling_compact(&sess, &turn_context)
-        .await
-        .is_err()
-    {
-        error!("Failed to run pre-sampling compact");
-        return None;
-    }
 
     let skills_outcome = Some(turn_context.turn_skills.outcome.as_ref());
 
@@ -5994,6 +5984,20 @@ pub(crate) async fn run_turn(
 
     let plugin_items =
         build_plugin_injections(&mentioned_plugins, &mcp_tools, &available_connectors);
+    let mut projected_turn_items = Vec::with_capacity(1 + skill_items.len() + plugin_items.len());
+    if !input.is_empty() {
+        let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input.clone());
+        projected_turn_items.push(initial_input_for_turn.into());
+    }
+    projected_turn_items.extend(skill_items.iter().cloned());
+    projected_turn_items.extend(plugin_items.iter().cloned());
+    if run_pre_sampling_compact(&sess, &turn_context, &projected_turn_items)
+        .await
+        .is_err()
+    {
+        error!("Failed to run pre-sampling compact");
+        return None;
+    }
     let mentioned_plugin_metadata = mentioned_plugins
         .iter()
         .filter_map(crate::plugins::PluginCapabilitySummary::telemetry_metadata)
@@ -6369,6 +6373,7 @@ pub(crate) async fn run_turn(
 async fn run_pre_sampling_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
+    projected_turn_items: &[ResponseItem],
 ) -> CodexResult<()> {
     let total_usage_tokens_before_compaction = sess.get_total_token_usage().await;
     maybe_run_previous_model_inline_compact(
@@ -6377,16 +6382,31 @@ async fn run_pre_sampling_compact(
         total_usage_tokens_before_compaction,
     )
     .await?;
-    let total_usage_tokens = sess.get_total_token_usage().await;
+    let projected_total_tokens =
+        match projected_prompt_token_count(sess, turn_context, projected_turn_items).await {
+            Some(tokens) => tokens,
+            None => sess.get_total_token_usage().await,
+        };
     let auto_compact_limit = turn_context
         .model_info
         .auto_compact_token_limit()
         .unwrap_or(i64::MAX);
-    // Compact if the total usage tokens are greater than the auto compact limit
-    if total_usage_tokens >= auto_compact_limit {
+    if projected_total_tokens >= auto_compact_limit {
         run_auto_compact(sess, turn_context, InitialContextInjection::DoNotInject).await?;
     }
     Ok(())
+}
+
+async fn projected_prompt_token_count(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    projected_turn_items: &[ResponseItem],
+) -> Option<i64> {
+    let mut projected_history = sess.clone_history().await;
+    let initial_context = sess.build_initial_context(turn_context).await;
+    projected_history.record_items(initial_context.iter(), turn_context.truncation_policy);
+    projected_history.record_items(projected_turn_items.iter(), turn_context.truncation_policy);
+    projected_history.estimate_token_count(turn_context)
 }
 
 /// Runs pre-sampling compaction against the previous model when switching to a smaller
@@ -6654,6 +6674,22 @@ fn is_invalid_encrypted_content_error(err: &CodexErr) -> bool {
     matches!(err, CodexErr::InvalidRequest(message) if message.contains("invalid_encrypted_content"))
 }
 
+fn is_github_copilot_request_body_timeout(err: &CodexErr, provider: &ModelProviderInfo) -> bool {
+    let is_github_copilot_provider = provider.name == "GitHub Copilot"
+        || provider.base_url.as_deref().is_some_and(|base_url| {
+            base_url.contains("githubcopilot.com") || base_url.contains("copilot-api.")
+        });
+    if !is_github_copilot_provider {
+        return false;
+    }
+
+    matches!(
+        err,
+        CodexErr::UnexpectedStatus(UnexpectedResponseError { status, body, .. })
+            if status.as_u16() == 408 && body.contains("Timed out reading request body")
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 #[instrument(level = "trace",
     skip_all,
@@ -6711,6 +6747,7 @@ async fn run_sampling_request(
         .await;
     let mut retries = 0;
     let mut recovered_invalid_encrypted_content = false;
+    let mut recovered_github_copilot_request_body_timeout = false;
     loop {
         let err = match try_run_sampling_request(
             tool_runtime.clone(),
@@ -6753,6 +6790,38 @@ async fn run_sampling_request(
                 &turn_context,
                 EventMsg::Warning(WarningEvent {
                     message: "Recovered from encrypted reasoning mismatch by resetting turn continuity and retrying once.".to_string(),
+                }),
+            )
+            .await;
+            let refreshed_input = sess
+                .clone_history()
+                .await
+                .for_prompt(&turn_context.model_info.input_modalities);
+            prompt = build_prompt(
+                refreshed_input,
+                router.as_ref(),
+                turn_context.as_ref(),
+                sess.get_base_instructions().await,
+            );
+            retries = 0;
+            continue;
+        }
+
+        if is_github_copilot_request_body_timeout(&err, &turn_context.provider)
+            && !recovered_github_copilot_request_body_timeout
+        {
+            recovered_github_copilot_request_body_timeout = true;
+            run_auto_compact(
+                &sess,
+                &turn_context,
+                InitialContextInjection::BeforeLastUserMessage,
+            )
+            .await?;
+            client_session.reset_websocket_session();
+            sess.send_event(
+                &turn_context,
+                EventMsg::Warning(WarningEvent {
+                    message: "Recovered from GitHub Copilot request-body timeout by compacting history and retrying once.".to_string(),
                 }),
             )
             .await;
