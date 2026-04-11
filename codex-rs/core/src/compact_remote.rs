@@ -21,7 +21,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnStartedEvent;
-use futures::TryFutureExt;
+use codex_protocol::protocol::WarningEvent;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing::info;
@@ -117,27 +117,46 @@ async fn run_remote_compact_task_inner_impl(
     };
 
     let model_client = sess.services.model_client.read().await.clone();
-    let mut new_history = model_client
-        .compact_conversation_history(
-            &prompt,
-            &turn_context.model_info,
-            turn_context.reasoning_effort,
-            turn_context.reasoning_summary,
-            &turn_context.session_telemetry,
-        )
-        .or_else(|err| async {
-            let total_usage_breakdown = sess.get_total_token_usage_breakdown().await;
-            let compact_request_log_data =
-                build_compact_request_log_data(&prompt.input, &prompt.base_instructions.text);
-            log_remote_compact_failure(
-                turn_context,
-                &compact_request_log_data,
-                total_usage_breakdown,
-                &err,
-            );
-            Err(err)
-        })
-        .await?;
+    let mut recovered_invalid_encrypted_content = false;
+    let mut new_history = loop {
+        match model_client
+            .compact_conversation_history(
+                &prompt,
+                &turn_context.model_info,
+                turn_context.reasoning_effort,
+                turn_context.reasoning_summary,
+                &turn_context.session_telemetry,
+            )
+            .await
+        {
+            Ok(history) => break history,
+            Err(err) => {
+                if is_invalid_encrypted_content_error(&err) && !recovered_invalid_encrypted_content
+                {
+                    recovered_invalid_encrypted_content = true;
+                    sess.clear_encrypted_reasoning_content().await;
+                    sess.send_event(
+                        turn_context,
+                        EventMsg::Warning(WarningEvent {
+                            message: "Recovered from encrypted reasoning mismatch during compaction and retried once.".to_string(),
+                        }),
+                    )
+                    .await;
+                    continue;
+                }
+                let total_usage_breakdown = sess.get_total_token_usage_breakdown().await;
+                let compact_request_log_data =
+                    build_compact_request_log_data(&prompt.input, &prompt.base_instructions.text);
+                log_remote_compact_failure(
+                    turn_context,
+                    &compact_request_log_data,
+                    total_usage_breakdown,
+                    &err,
+                );
+                return Err(err);
+            }
+        }
+    };
     new_history = process_compacted_history(
         sess.as_ref(),
         turn_context.as_ref(),
@@ -269,6 +288,10 @@ fn log_remote_compact_failure(
         compact_error = %err,
         "remote compaction failed"
     );
+}
+
+fn is_invalid_encrypted_content_error(err: &CodexErr) -> bool {
+    matches!(err, CodexErr::InvalidRequest(message) if message.contains("invalid_encrypted_content"))
 }
 
 fn trim_function_call_history_to_fit_context_window(

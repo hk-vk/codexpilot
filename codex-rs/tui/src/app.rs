@@ -11272,13 +11272,16 @@ guardian_approval = true
 
         let summary =
             session_summary(usage, Some(conversation), /*thread_name*/ None).expect("summary");
+        let prefix = codex_utils_home_dir::current_app_command_name();
         assert_eq!(
             summary.usage_line,
             "Token usage: total=12 input=10 output=2"
         );
         assert_eq!(
             summary.resume_command,
-            Some("codex resume 123e4567-e89b-12d3-a456-426614174000".to_string())
+            Some(format!(
+                "{prefix} resume 123e4567-e89b-12d3-a456-426614174000"
+            ))
         );
     }
 
@@ -11294,9 +11297,10 @@ guardian_approval = true
 
         let summary = session_summary(usage, Some(conversation), Some("my-session".to_string()))
             .expect("summary");
+        let prefix = codex_utils_home_dir::current_app_command_name();
         assert_eq!(
             summary.resume_command,
-            Some("codex resume my-session".to_string())
+            Some(format!("{prefix} resume my-session"))
         );
     }
 }

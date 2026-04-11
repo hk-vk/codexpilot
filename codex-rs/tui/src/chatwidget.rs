@@ -10184,8 +10184,13 @@ impl ChatWidget {
     }
 
     fn rename_confirmation_cell(name: &str, thread_id: Option<ThreadId>) -> PlainHistoryCell {
-        let resume_cmd = codex_core::util::resume_command(Some(name), thread_id)
-            .unwrap_or_else(|| format!("codex resume {name}"));
+        let resume_cmd =
+            codex_core::util::resume_command(Some(name), thread_id).unwrap_or_else(|| {
+                format!(
+                    "{} resume {name}",
+                    codex_utils_home_dir::current_app_command_name()
+                )
+            });
         let name = name.to_string();
         let line = vec![
             "• ".into(),

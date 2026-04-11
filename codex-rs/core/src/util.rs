@@ -11,6 +11,10 @@ use codex_shell_command::parse_command::shlex_join;
 const INITIAL_DELAY_MS: u64 = 200;
 const BACKOFF_FACTOR: f64 = 2.0;
 
+fn current_resume_prefix() -> &'static str {
+    codex_utils_home_dir::current_app_command_name()
+}
+
 /// Emit structured feedback metadata as key/value pairs.
 ///
 /// This logs a tracing event with `target: "feedback_tags"`. If
@@ -124,12 +128,13 @@ pub fn resume_command(thread_name: Option<&str>, thread_id: Option<ThreadId>) ->
         .map(str::to_string)
         .or_else(|| thread_id.map(|thread_id| thread_id.to_string()));
     resume_target.map(|target| {
+        let command = current_resume_prefix();
         let needs_double_dash = target.starts_with('-');
         let escaped = shlex_join(&[target]);
         if needs_double_dash {
-            format!("codex resume -- {escaped}")
+            format!("{command} resume -- {escaped}")
         } else {
-            format!("codex resume {escaped}")
+            format!("{command} resume {escaped}")
         }
     })
 }

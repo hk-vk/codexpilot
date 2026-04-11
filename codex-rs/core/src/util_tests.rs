@@ -437,16 +437,20 @@ fn normalize_thread_name_trims_and_rejects_empty() {
 fn resume_command_prefers_name_over_id() {
     let thread_id = ThreadId::from_string("123e4567-e89b-12d3-a456-426614174000").unwrap();
     let command = resume_command(Some("my-thread"), Some(thread_id));
-    assert_eq!(command, Some("codex resume my-thread".to_string()));
+    let prefix = codex_utils_home_dir::current_app_command_name();
+    assert_eq!(command, Some(format!("{prefix} resume my-thread")));
 }
 
 #[test]
 fn resume_command_with_only_id() {
     let thread_id = ThreadId::from_string("123e4567-e89b-12d3-a456-426614174000").unwrap();
     let command = resume_command(/*thread_name*/ None, Some(thread_id));
+    let prefix = codex_utils_home_dir::current_app_command_name();
     assert_eq!(
         command,
-        Some("codex resume 123e4567-e89b-12d3-a456-426614174000".to_string())
+        Some(format!(
+            "{prefix} resume 123e4567-e89b-12d3-a456-426614174000"
+        ))
     );
 }
 
@@ -459,14 +463,15 @@ fn resume_command_with_no_name_or_id() {
 #[test]
 fn resume_command_quotes_thread_name_when_needed() {
     let command = resume_command(Some("-starts-with-dash"), /*thread_id*/ None);
+    let prefix = codex_utils_home_dir::current_app_command_name();
     assert_eq!(
         command,
-        Some("codex resume -- -starts-with-dash".to_string())
+        Some(format!("{prefix} resume -- -starts-with-dash"))
     );
 
     let command = resume_command(Some("two words"), /*thread_id*/ None);
-    assert_eq!(command, Some("codex resume 'two words'".to_string()));
+    assert_eq!(command, Some(format!("{prefix} resume 'two words'")));
 
     let command = resume_command(Some("quote'case"), /*thread_id*/ None);
-    assert_eq!(command, Some("codex resume \"quote'case\"".to_string()));
+    assert_eq!(command, Some(format!("{prefix} resume \"quote'case\"")));
 }

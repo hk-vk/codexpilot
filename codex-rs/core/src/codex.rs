@@ -3998,6 +3998,11 @@ impl Session {
         state.mcp_dependency_prompted()
     }
 
+    pub(crate) async fn clear_encrypted_reasoning_content(&self) {
+        let mut state = self.state.lock().await;
+        state.clear_encrypted_reasoning_content();
+    }
+
     pub(crate) async fn record_mcp_dependency_prompted<I>(&self, names: I)
     where
         I: IntoIterator<Item = String>,
