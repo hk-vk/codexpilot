@@ -178,6 +178,25 @@ impl ContextManager {
         self.items = items;
     }
 
+    /// Removes provider-bound encrypted reasoning payloads from history.
+    ///
+    /// These payloads can become invalid after switching model providers.
+    pub(crate) fn clear_encrypted_reasoning_content(&mut self) {
+        for item in &mut self.items {
+            match item {
+                ResponseItem::Reasoning {
+                    encrypted_content, ..
+                } => {
+                    *encrypted_content = None;
+                }
+                ResponseItem::Compaction { encrypted_content } => {
+                    encrypted_content.clear();
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Replace image content in the last turn if it originated from a tool output.
     /// Returns true when a tool image was replaced, false otherwise.
     pub(crate) fn replace_last_turn_images(&mut self, placeholder: &str) -> bool {

@@ -87,6 +87,10 @@ impl SessionState {
             .set_reference_context_item(reference_context_item);
     }
 
+    pub(crate) fn clear_encrypted_reasoning_content(&mut self) {
+        self.history.clear_encrypted_reasoning_content();
+    }
+
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
         self.history.set_token_info(info);
     }

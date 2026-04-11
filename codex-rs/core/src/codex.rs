@@ -71,7 +71,6 @@ use codex_mcp::mcp_connection_manager::SandboxState;
 use codex_mcp::mcp_connection_manager::ToolInfo as McpToolInfo;
 use codex_mcp::mcp_connection_manager::codex_apps_tools_cache_key;
 use codex_mcp::mcp_connection_manager::filter_non_codex_apps_mcp_tools_only;
-#[cfg(test)]
 use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_models_manager::manager::ModelsManager;
 use codex_models_manager::manager::RefreshStrategy;
@@ -2363,15 +2362,47 @@ impl Session {
         &self,
         updates: SessionSettingsUpdate,
     ) -> ConstraintResult<()> {
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
 
         match state.session_configuration.apply(&updates) {
-            Ok(updated) => {
+            Ok(mut updated) => {
                 let previous_cwd = state.session_configuration.cwd.clone();
                 let next_cwd = updated.cwd.clone();
                 let codex_home = updated.codex_home.clone();
                 let session_source = updated.session_source.clone();
-                let provider_changed = updates.model_provider_id.is_some();
+                let previous_provider_id = state
+                    .session_configuration
+                    .original_config_do_not_use
+                    .model_provider_id
+                    .clone();
+                let provider_changed = updates
+                    .model_provider_id
+                    .as_deref()
+                    .is_some_and(|model_provider_id| model_provider_id != previous_provider_id);
+                drop(state);
+
+                if provider_changed {
+                    if let Some(supported_model) = self
+                        .resolve_supported_model_for_provider_change(&updated)
+                        .await
+                    {
+                        warn!(
+                            "switched provider to `{}`; model `{}` is unsupported, falling back to `{supported_model}`",
+                            updated.original_config_do_not_use.model_provider_id,
+                            updated.collaboration_mode.model(),
+                        );
+                        updated.collaboration_mode = updated.collaboration_mode.with_updates(
+                            Some(supported_model),
+                            None,
+                            None,
+                        );
+                    }
+                }
+
+                let mut state = self.state.lock().await;
+                if provider_changed {
+                    state.clear_encrypted_reasoning_content();
+                }
                 state.session_configuration = updated.clone();
                 drop(state);
 
@@ -2406,19 +2437,52 @@ impl Session {
         }
     }
 
+    async fn resolve_supported_model_for_provider_change(
+        &self,
+        session_configuration: &SessionConfiguration,
+    ) -> Option<String> {
+        let config = Arc::clone(&session_configuration.original_config_do_not_use);
+        let current_model = session_configuration.collaboration_mode.model().to_string();
+        let provider_id = config.model_provider_id.clone();
+        let provider = session_configuration.provider.clone();
+        let models_manager = ModelsManager::new_with_provider(
+            config.codex_home.clone(),
+            Arc::clone(&self.services.auth_manager),
+            config.model_catalog.clone(),
+            CollaborationModesConfig::default(),
+            provider_id,
+            provider,
+        );
+        let available_models = models_manager
+            .list_models(RefreshStrategy::OnlineIfUncached)
+            .await;
+        if available_models
+            .iter()
+            .any(|preset| preset.model == current_model)
+        {
+            return None;
+        }
+        available_models
+            .iter()
+            .find(|preset| preset.is_default)
+            .or_else(|| available_models.first())
+            .map(|preset| preset.model.clone())
+    }
+
     pub(crate) async fn new_turn_with_sub_id(
         &self,
         sub_id: String,
         updates: SessionSettingsUpdate,
     ) -> ConstraintResult<Arc<TurnContext>> {
         let (
-            session_configuration,
+            mut session_configuration,
             sandbox_policy_changed,
             previous_cwd,
             codex_home,
             session_source,
+            provider_changed,
         ) = {
-            let mut state = self.state.lock().await;
+            let state = self.state.lock().await;
             match state.session_configuration.clone().apply(&updates) {
                 Ok(next) => {
                     let previous_cwd = state.session_configuration.cwd.clone();
@@ -2426,13 +2490,22 @@ impl Session {
                         state.session_configuration.sandbox_policy != next.sandbox_policy;
                     let codex_home = next.codex_home.clone();
                     let session_source = next.session_source.clone();
-                    state.session_configuration = next.clone();
+                    let previous_provider_id = state
+                        .session_configuration
+                        .original_config_do_not_use
+                        .model_provider_id
+                        .clone();
+                    let provider_changed = updates
+                        .model_provider_id
+                        .as_deref()
+                        .is_some_and(|model_provider_id| model_provider_id != previous_provider_id);
                     (
                         next,
                         sandbox_policy_changed,
                         previous_cwd,
                         codex_home,
                         session_source,
+                        provider_changed,
                     )
                 }
                 Err(err) => {
@@ -2449,6 +2522,45 @@ impl Session {
                 }
             }
         };
+
+        if provider_changed
+            && let Some(supported_model) = self
+                .resolve_supported_model_for_provider_change(&session_configuration)
+                .await
+        {
+            warn!(
+                "switched provider to `{}`; model `{}` is unsupported, falling back to `{supported_model}`",
+                session_configuration
+                    .original_config_do_not_use
+                    .model_provider_id,
+                session_configuration.collaboration_mode.model(),
+            );
+            session_configuration.collaboration_mode = session_configuration
+                .collaboration_mode
+                .with_updates(Some(supported_model), None, None);
+        }
+
+        let mut state = self.state.lock().await;
+        if provider_changed {
+            state.clear_encrypted_reasoning_content();
+        }
+        state.session_configuration = session_configuration.clone();
+        drop(state);
+
+        if provider_changed {
+            let config = Arc::clone(&session_configuration.original_config_do_not_use);
+            let rebuilt_model_client = ModelClient::new(
+                Some(Arc::clone(&self.services.auth_manager)),
+                self.conversation_id,
+                session_configuration.provider.clone(),
+                session_configuration.session_source.clone(),
+                config.model_verbosity,
+                config.features.enabled(Feature::EnableRequestCompression),
+                config.features.enabled(Feature::RuntimeMetrics),
+                Self::build_model_client_beta_features_header(config.as_ref()),
+            );
+            *self.services.model_client.write().await = rebuilt_model_client;
+        }
 
         self.maybe_refresh_shell_snapshot_for_cwd(
             &previous_cwd,
@@ -6532,6 +6644,11 @@ pub(crate) fn build_prompt(
         output_schema: turn_context.final_output_json_schema.clone(),
     }
 }
+
+fn is_invalid_encrypted_content_error(err: &CodexErr) -> bool {
+    matches!(err, CodexErr::InvalidRequest(message) if message.contains("invalid_encrypted_content"))
+}
+
 #[allow(clippy::too_many_arguments)]
 #[instrument(level = "trace",
     skip_all,
@@ -6565,7 +6682,7 @@ async fn run_sampling_request(
 
     let base_instructions = sess.get_base_instructions().await;
 
-    let prompt = build_prompt(
+    let mut prompt = build_prompt(
         input,
         router.as_ref(),
         turn_context.as_ref(),
@@ -6588,6 +6705,7 @@ async fn run_sampling_request(
         )
         .await;
     let mut retries = 0;
+    let mut recovered_invalid_encrypted_content = false;
     loop {
         let err = match try_run_sampling_request(
             tool_runtime.clone(),
@@ -6618,6 +6736,34 @@ async fn run_sampling_request(
             }
             Err(err) => err,
         };
+
+        if is_invalid_encrypted_content_error(&err) && !recovered_invalid_encrypted_content {
+            recovered_invalid_encrypted_content = true;
+            {
+                let mut state = sess.state.lock().await;
+                state.clear_encrypted_reasoning_content();
+            }
+            client_session.reset_websocket_session();
+            sess.send_event(
+                &turn_context,
+                EventMsg::Warning(WarningEvent {
+                    message: "Recovered from encrypted reasoning mismatch by resetting turn continuity and retrying once.".to_string(),
+                }),
+            )
+            .await;
+            let refreshed_input = sess
+                .clone_history()
+                .await
+                .for_prompt(&turn_context.model_info.input_modalities);
+            prompt = build_prompt(
+                refreshed_input,
+                router.as_ref(),
+                turn_context.as_ref(),
+                sess.get_base_instructions().await,
+            );
+            retries = 0;
+            continue;
+        }
 
         if !err.is_retryable() {
             return Err(err);
