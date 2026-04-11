@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,7 +18,21 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BUILD_SCRIPT = REPO_ROOT / "codex-cli" / "scripts" / "build_npm_package.py"
 INSTALL_NATIVE_DEPS = REPO_ROOT / "codex-cli" / "scripts" / "install_native_deps.py"
 WORKFLOW_NAME = ".github/workflows/rust-release.yml"
-GITHUB_REPO = "openai/codex"
+
+
+def current_github_repo() -> str:
+    remote = subprocess.check_output(
+        ["git", "remote", "get-url", "origin"],
+        cwd=REPO_ROOT,
+        text=True,
+    ).strip()
+    ssh_match = re.match(r"git@github\.com:(?P<repo>[^\s]+?)(?:\.git)?$", remote)
+    if ssh_match:
+        return ssh_match.group("repo")
+    https_match = re.match(r"https://github\.com/(?P<repo>[^\s]+?)(?:\.git)?$", remote)
+    if https_match:
+        return https_match.group("repo")
+    raise RuntimeError(f"Unsupported origin remote for GitHub workflow lookup: {remote}")
 
 _SPEC = importlib.util.spec_from_file_location("codex_build_npm_package", BUILD_SCRIPT)
 if _SPEC is None or _SPEC.loader is None:
@@ -84,6 +99,8 @@ def resolve_release_workflow(version: str) -> dict:
             "gh",
             "run",
             "list",
+            "--repo",
+            current_github_repo(),
             "--branch",
             f"rust-v{version}",
             "--json",
