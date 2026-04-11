@@ -96,8 +96,10 @@ async fn run_remote_compact_task_inner_impl(
         .cloned()
         .collect();
 
-    let prompt_input = history.for_prompt(&turn_context.model_info.input_modalities);
-    let tool_router = built_tools(
+    let mut prompt_input = history
+        .clone()
+        .for_prompt(&turn_context.model_info.input_modalities);
+    let mut tool_router = built_tools(
         sess.as_ref(),
         turn_context.as_ref(),
         &prompt_input,
@@ -106,7 +108,7 @@ async fn run_remote_compact_task_inner_impl(
         &CancellationToken::new(),
     )
     .await?;
-    let prompt = Prompt {
+    let mut prompt = Prompt {
         input: prompt_input,
         tools: tool_router.model_visible_specs(),
         parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
@@ -142,6 +144,28 @@ async fn run_remote_compact_task_inner_impl(
                         }),
                     )
                     .await;
+                    history.clear_encrypted_reasoning_content();
+                    prompt_input = history
+                        .clone()
+                        .for_prompt(&turn_context.model_info.input_modalities);
+                    tool_router = built_tools(
+                        sess.as_ref(),
+                        turn_context.as_ref(),
+                        &prompt_input,
+                        &HashSet::new(),
+                        /*skills_outcome*/ None,
+                        &CancellationToken::new(),
+                    )
+                    .await?;
+                    prompt = Prompt {
+                        input: prompt_input,
+                        tools: tool_router.model_visible_specs(),
+                        parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
+                        base_instructions: prompt.base_instructions.clone(),
+                        personality: turn_context.personality,
+                        request_initiator: RequestInitiator::Agent,
+                        output_schema: None,
+                    };
                     continue;
                 }
                 let total_usage_breakdown = sess.get_total_token_usage_breakdown().await;
