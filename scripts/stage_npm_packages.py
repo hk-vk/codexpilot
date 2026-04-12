@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage one or more Codex npm packages for release."""
+"""Stage one or more Codexpilot npm packages for release."""
 
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ def run_command(cmd: list[str]) -> None:
 def tarball_name_for_package(package: str, version: str) -> str:
     if package in CODEX_PLATFORM_PACKAGES:
         platform = package.removeprefix("codex-")
-        return f"codex-npm-{platform}-{version}.tgz"
+        return f"codexpilot-npm-{platform}-{version}.tgz"
     return f"{package}-npm-{version}.tgz"
 
 

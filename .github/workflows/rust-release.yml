@@ -586,7 +586,6 @@ jobs:
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
-          scope: "@openai"
 
       # Trusted publishing requires npm CLI version 11.5.1 or later.
       - name: Update npm
@@ -603,10 +602,10 @@ jobs:
           tag="$RELEASE_TAG"
           mkdir -p dist/npm
           patterns=(
-            "codex-npm-${version}.tgz"
-            "codex-npm-linux-*-${version}.tgz"
-            "codex-npm-darwin-*-${version}.tgz"
-            "codex-npm-win32-*-${version}.tgz"
+            "codexpilot-npm-${version}.tgz"
+            "codexpilot-npm-linux-*-${version}.tgz"
+            "codexpilot-npm-darwin-*-${version}.tgz"
+            "codexpilot-npm-win32-*-${version}.tgz"
             "codex-responses-api-proxy-npm-${version}.tgz"
             "codex-sdk-npm-${version}.tgz"
           )
@@ -641,12 +640,12 @@ jobs:
             tag=""
 
             case "${filename}" in
-              codex-npm-linux-*-"${VERSION}".tgz|codex-npm-darwin-*-"${VERSION}".tgz|codex-npm-win32-*-"${VERSION}".tgz)
-                platform="${filename#codex-npm-}"
+              codexpilot-npm-linux-*-"${VERSION}".tgz|codexpilot-npm-darwin-*-"${VERSION}".tgz|codexpilot-npm-win32-*-"${VERSION}".tgz)
+                platform="${filename#codexpilot-npm-}"
                 platform="${platform%-${VERSION}.tgz}"
                 tag="${prefix}${platform}"
                 ;;
-              codex-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
+              codexpilot-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
                 tag="${NPM_TAG}"
                 ;;
               *)
