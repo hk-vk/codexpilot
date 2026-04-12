@@ -41,6 +41,7 @@ _BUILD_MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_BUILD_MODULE)
 PACKAGE_NATIVE_COMPONENTS = getattr(_BUILD_MODULE, "PACKAGE_NATIVE_COMPONENTS", {})
 PACKAGE_EXPANSIONS = getattr(_BUILD_MODULE, "PACKAGE_EXPANSIONS", {})
+PACKAGE_TARGET_FILTERS = getattr(_BUILD_MODULE, "PACKAGE_TARGET_FILTERS", {})
 CODEX_PLATFORM_PACKAGES = getattr(_BUILD_MODULE, "CODEX_PLATFORM_PACKAGES", {})
 
 
@@ -81,6 +82,16 @@ def collect_native_components(packages: list[str]) -> set[str]:
     for package in packages:
         components.update(PACKAGE_NATIVE_COMPONENTS.get(package, []))
     return components
+
+
+def collect_native_targets(packages: list[str]) -> list[str]:
+    targets: list[str] = []
+    for package in packages:
+        target = PACKAGE_TARGET_FILTERS.get(package)
+        if target is None or target in targets:
+            continue
+        targets.append(target)
+    return targets
 
 
 def expand_packages(packages: list[str]) -> list[str]:
@@ -130,6 +141,7 @@ def resolve_workflow_url(version: str, override: str | None) -> tuple[str, str |
 def install_native_components(
     workflow_url: str,
     components: set[str],
+    targets: list[str],
     vendor_root: Path,
 ) -> None:
     if not components:
@@ -138,6 +150,8 @@ def install_native_components(
     cmd = [str(INSTALL_NATIVE_DEPS), "--workflow-url", workflow_url]
     for component in sorted(components):
         cmd.extend(["--component", component])
+    for target in targets:
+        cmd.extend(["--target", target])
     cmd.append(str(vendor_root))
     run_command(cmd)
 
@@ -164,6 +178,7 @@ def main() -> int:
 
     packages = expand_packages(list(args.packages))
     native_components = collect_native_components(packages)
+    native_targets = collect_native_targets(packages)
 
     vendor_temp_root: Path | None = None
     vendor_src: Path | None = None
@@ -177,7 +192,12 @@ def main() -> int:
                 args.release_version, args.workflow_url
             )
             vendor_temp_root = Path(tempfile.mkdtemp(prefix="npm-native-", dir=runner_temp))
-            install_native_components(workflow_url, native_components, vendor_temp_root)
+            install_native_components(
+                workflow_url,
+                native_components,
+                native_targets,
+                vendor_temp_root,
+            )
             vendor_src = vendor_temp_root / "vendor"
 
         if resolved_head_sha:

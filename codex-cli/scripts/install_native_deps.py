@@ -139,6 +139,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--target",
+        dest="targets",
+        action="append",
+        choices=BINARY_TARGETS,
+        help=(
+            "Limit installation to the specified artifact targets. May be repeated. "
+            "Defaults to all supported targets."
+        ),
+    )
+    parser.add_argument(
         "root",
         nargs="?",
         type=Path,
@@ -164,6 +174,7 @@ def main() -> int:
         "rg",
     ]
     binary_component_names = [name for name in components if name in BINARY_COMPONENTS]
+    selected_targets = list(dict.fromkeys(args.targets or [])) or None
 
     if binary_component_names:
         workflow_url = (args.workflow_url or DEFAULT_WORKFLOW_URL).strip()
@@ -183,12 +194,13 @@ def main() -> int:
                     artifacts_dir,
                     vendor_dir,
                     [BINARY_COMPONENTS[name] for name in binary_component_names],
+                    selected_targets,
                 )
 
     if "rg" in components:
         with _gha_group("Fetch ripgrep binaries"):
             print("Fetching ripgrep binaries...")
-            fetch_rg(vendor_dir, DEFAULT_RG_TARGETS, manifest_path=RG_MANIFEST)
+            fetch_rg(vendor_dir, selected_targets or DEFAULT_RG_TARGETS, manifest_path=RG_MANIFEST)
 
     print(f"Installed native dependencies into {vendor_dir}")
     return 0
@@ -318,12 +330,21 @@ def install_binary_components(
     artifacts_dir: Path,
     vendor_dir: Path,
     selected_components: Sequence[BinaryComponent],
+    selected_targets: Sequence[str] | None = None,
 ) -> None:
     if not selected_components:
         return
 
+    selected_targets_set = set(selected_targets) if selected_targets is not None else None
+
     for component in selected_components:
         component_targets = list(component.targets or BINARY_TARGETS)
+        if selected_targets_set is not None:
+            component_targets = [
+                target for target in component_targets if target in selected_targets_set
+            ]
+        if not component_targets:
+            continue
 
         print(
             f"Installing {component.binary_basename} binaries for targets: "
