@@ -261,8 +261,10 @@ jobs:
           target: ${{ matrix.target }}
           artifacts-dir: ${{ github.workspace }}/codex-rs/target/${{ matrix.target }}/release
 
-      - if: ${{ runner.os == 'macOS' }}
+      - if: ${{ runner.os == 'macOS' && env.APPLE_CERTIFICATE_P12 != '' }}
         name: MacOS code signing (binaries)
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
         uses: ./.github/actions/macos-code-sign
         with:
           target: ${{ matrix.target }}
@@ -320,8 +322,10 @@ jobs:
             exit 1
           fi
 
-      - if: ${{ runner.os == 'macOS' }}
+      - if: ${{ runner.os == 'macOS' && env.APPLE_CERTIFICATE_P12 != '' }}
         name: MacOS code signing (dmg)
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
         uses: ./.github/actions/macos-code-sign
         with:
           target: ${{ matrix.target }}
