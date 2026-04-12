@@ -2,8 +2,15 @@ name: rust-release-dispatch
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to use (for example rust-v0.0.0-alpha.1)"
+        required: true
+        type: string
 
 jobs:
   run-rust-release:
     uses: ./.github/workflows/rust-release.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
     secrets: inherit

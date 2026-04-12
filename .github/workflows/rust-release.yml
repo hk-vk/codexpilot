@@ -11,7 +11,16 @@ on:
     tags:
       - "rust-v*.*.*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to use (for example rust-v0.0.0-alpha.1)"
+        required: false
+        type: string
   workflow_call:
+    inputs:
+      release_tag:
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}
@@ -25,18 +34,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@c2b55edffaf41a251c410bb32bed22afefa800f1 # 1.92
       - name: Validate tag matches Cargo.toml version
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           set -euo pipefail
           echo "::group::Tag validation"
 
-          # 1. Must be a tag and match the regex
-          [[ "${GITHUB_REF_TYPE}" == "tag" ]] \
-            || { echo "❌  Not a tag push"; exit 1; }
-          [[ "${GITHUB_REF_NAME}" =~ ^rust-v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)(\.[0-9]+)?)?$ ]] \
-            || { echo "❌  Tag '${GITHUB_REF_NAME}' doesn't match expected format"; exit 1; }
+          release_tag="${RELEASE_TAG}"
+          [[ -n "${release_tag}" ]] \
+            || { echo "❌  No release tag provided"; exit 1; }
+          [[ "${release_tag}" =~ ^rust-v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)(\.[0-9]+)?)?$ ]] \
+            || { echo "❌  Tag '${release_tag}' doesn't match expected format"; exit 1; }
 
           # 2. Extract versions
-          tag_ver="${GITHUB_REF_NAME#rust-v}"
+          tag_ver="${release_tag#rust-v}"
           cargo_ver="$(grep -m1 '^version' codex-rs/Cargo.toml \
                         | sed -E 's/version *= *"([^"]+)".*/\1/')"
 
@@ -61,7 +72,7 @@ jobs:
     env:
       # 2026-03-04: temporarily change releases to use thin LTO because
       # Ubuntu ARM is timing out at 60 minutes.
-      CARGO_PROFILE_RELEASE_LTO: ${{ contains(github.ref_name, '-alpha') && 'thin' || 'thin' }}
+      CARGO_PROFILE_RELEASE_LTO: ${{ contains(inputs.release_tag || github.ref_name, '-alpha') && 'thin' || 'thin' }}
 
     strategy:
       fail-fast: false
@@ -388,7 +399,7 @@ jobs:
     needs: tag-check
     uses: ./.github/workflows/rust-release-windows.yml
     with:
-      release-lto: ${{ contains(github.ref_name, '-alpha') && 'thin' || 'fat' }}
+      release-lto: ${{ contains(inputs.release_tag || github.ref_name, '-alpha') && 'thin' || 'fat' }}
     secrets: inherit
 
   argument-comment-lint-release-assets:
@@ -416,7 +427,7 @@ jobs:
       actions: read
     outputs:
       version: ${{ steps.release_name.outputs.name }}
-      tag: ${{ github.ref_name }}
+      tag: ${{ inputs.release_tag || github.ref_name }}
       should_publish_npm: ${{ steps.npm_publish_settings.outputs.should_publish }}
       npm_tag: ${{ steps.npm_publish_settings.outputs.npm_tag }}
 
@@ -468,10 +479,12 @@ jobs:
 
       - name: Define release name
         id: release_name
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           # Extract the version from the tag name, which is in the format
           # "rust-v0.1.0".
-          version="${GITHUB_REF_NAME#rust-v}"
+          version="${RELEASE_TAG#rust-v}"
           echo "name=${version}" >> $GITHUB_OUTPUT
 
       - name: Determine npm publish settings
@@ -528,7 +541,7 @@ jobs:
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           name: ${{ steps.release_name.outputs.name }}
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           body_path: ${{ steps.release_notes.outputs.path }}
           files: dist/**
           # Mark as prerelease only when the version has a suffix after x.y.z
@@ -539,21 +552,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag: ${{ github.ref_name }}
+          tag: ${{ inputs.release_tag || github.ref_name }}
           config: .github/dotslash-config.json
 
       - uses: facebook/dotslash-publish-release@9c9ec027515c34db9282a09a25a9cab5880b2c52 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag: ${{ github.ref_name }}
+          tag: ${{ inputs.release_tag || github.ref_name }}
           config: .github/dotslash-zsh-config.json
 
       - uses: facebook/dotslash-publish-release@9c9ec027515c34db9282a09a25a9cab5880b2c52 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag: ${{ github.ref_name }}
+          tag: ${{ inputs.release_tag || github.ref_name }}
           config: .github/dotslash-argument-comment-lint-config.json
 
       - name: Trigger developers.openai.com deploy
@@ -563,9 +576,10 @@ jobs:
         continue-on-error: true
         env:
           DEV_WEBSITE_VERCEL_DEPLOY_HOOK_URL: ${{ secrets.DEV_WEBSITE_VERCEL_DEPLOY_HOOK_URL }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           if ! curl -sS -f -o /dev/null -X POST "$DEV_WEBSITE_VERCEL_DEPLOY_HOOK_URL"; then
-            echo "::warning title=developers.openai.com deploy hook failed::Vercel deploy hook POST failed for ${GITHUB_REF_NAME}"
+            echo "::warning title=developers.openai.com deploy hook failed::Vercel deploy hook POST failed for ${RELEASE_TAG}"
             exit 1
           fi
 
