@@ -529,9 +529,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ steps.release_name.outputs.name }}
+          CURRENT_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           ./scripts/stage_npm_packages.py \
             --release-version "$RELEASE_VERSION" \
+            --workflow-url "$CURRENT_WORKFLOW_URL" \
             --package codex \
             --package codex-responses-api-proxy \
             --package codex-sdk
