@@ -146,7 +146,9 @@ jobs:
           ls -lh target/${{ matrix.target }}/release/codex-command-runner.exe
 
       - name: Sign Windows binaries with Azure Trusted Signing
-        if: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_ID != '' }}
+        if: ${{ env.AZURE_TRUSTED_SIGNING_CLIENT_ID != '' }}
+        env:
+          AZURE_TRUSTED_SIGNING_CLIENT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_ID }}
         uses: ./.github/actions/windows-code-sign
         with:
           target: ${{ matrix.target }}
