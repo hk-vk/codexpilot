@@ -54,13 +54,6 @@ CODEX_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
         "os": "win32",
         "cpu": "x64",
     },
-    "codex-win32-arm64": {
-        "npm_name": "codexpilot-win32-arm64",
-        "npm_tag": "win32-arm64",
-        "target_triple": "aarch64-pc-windows-msvc",
-        "os": "win32",
-        "cpu": "arm64",
-    },
 }
 
 PACKAGE_EXPANSIONS: dict[str, list[str]] = {
@@ -74,7 +67,6 @@ PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
     "codex-darwin-x64": ["codex", "rg"],
     "codex-darwin-arm64": ["codex", "rg"],
     "codex-win32-x64": ["codex", "rg", "codex-windows-sandbox-setup", "codex-command-runner"],
-    "codex-win32-arm64": ["codex", "rg", "codex-windows-sandbox-setup", "codex-command-runner"],
     "codex-responses-api-proxy": ["codex-responses-api-proxy"],
     "codex-sdk": [],
 }
