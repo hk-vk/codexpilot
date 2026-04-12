@@ -37,34 +37,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: windows-x64
+          - runner: windows-2022
             target: x86_64-pc-windows-msvc
             bundle: primary
             build_args: --bin codex --bin codex-responses-api-proxy
-            runs_on:
-              group: codex-runners
-              labels: codex-windows-x64
-          - runner: windows-arm64
-            target: aarch64-pc-windows-msvc
-            bundle: primary
-            build_args: --bin codex --bin codex-responses-api-proxy
-            runs_on:
-              group: codex-runners
-              labels: codex-windows-arm64
-          - runner: windows-x64
+            runs_on: windows-2022
+          - runner: windows-2022
             target: x86_64-pc-windows-msvc
             bundle: helpers
             build_args: --bin codex-windows-sandbox-setup --bin codex-command-runner
-            runs_on:
-              group: codex-runners
-              labels: codex-windows-x64
-          - runner: windows-arm64
-            target: aarch64-pc-windows-msvc
-            bundle: helpers
-            build_args: --bin codex-windows-sandbox-setup --bin codex-command-runner
-            runs_on:
-              group: codex-runners
-              labels: codex-windows-arm64
+            runs_on: windows-2022
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -135,16 +117,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: windows-x64
+          - runner: windows-2022
             target: x86_64-pc-windows-msvc
-            runs_on:
-              group: codex-runners
-              labels: codex-windows-x64
-          - runner: windows-arm64
-            target: aarch64-pc-windows-msvc
-            runs_on:
-              group: codex-runners
-              labels: codex-windows-arm64
+            runs_on: windows-2022
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
