@@ -1,0 +1,9 @@
+name: rust-release-dispatch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-rust-release:
+    uses: ./.github/workflows/rust-release.yml
+    secrets: inherit
