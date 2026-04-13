@@ -31,9 +31,6 @@ function determineTargetTriple(platform, arch) {
       if (arch === "x64") {
         return "x86_64-pc-windows-msvc";
       }
-      if (arch === "arm64") {
-        return "aarch64-pc-windows-msvc";
-      }
       break;
     default:
       break;
