@@ -554,6 +554,24 @@ jobs:
           # (e.g. -alpha, -beta). Otherwise publish a normal release.
           prerelease: ${{ contains(steps.release_name.outputs.name, '-') }}
 
+      - name: Delete existing DotSlash manifest assets on rerun
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          for asset in \
+            codex \
+            codex-responses-api-proxy \
+            codex-command-runner \
+            codex-windows-sandbox-setup \
+            codex-zsh \
+            argument-comment-lint; do
+            gh release delete-asset "$RELEASE_TAG" "$asset" \
+              --repo "$GITHUB_REPOSITORY" \
+              --yes >/dev/null 2>&1 || true
+          done
+
       - uses: facebook/dotslash-publish-release@9c9ec027515c34db9282a09a25a9cab5880b2c52 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
