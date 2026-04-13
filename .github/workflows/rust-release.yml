@@ -609,10 +609,6 @@ jobs:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
 
-      # Trusted publishing requires npm CLI version 11.5.1 or later.
-      - name: Update npm
-        run: npm install -g npm@latest
-
       - name: Download npm tarballs from release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -676,7 +672,7 @@ jobs:
                 ;;
             esac
 
-            publish_cmd=(npm publish "${GITHUB_WORKSPACE}/${tarball}")
+            publish_cmd=(npx -y npm@11.6.2 publish "${GITHUB_WORKSPACE}/${tarball}")
             if [[ -n "${tag}" ]]; then
               publish_cmd+=(--tag "${tag}")
             fi
@@ -736,8 +732,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh api \
-            repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli \
-            -X PATCH \
-            -f sha="${GITHUB_SHA}" \
-            -F force=true
+
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/latest-alpha-cli" >/dev/null 2>&1; then
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli" \
+              -X PATCH \
+              -f sha="${GITHUB_SHA}" \
+              -F force=true
+          else
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -X POST \
+              -f ref="refs/heads/latest-alpha-cli" \
+              -f sha="${GITHUB_SHA}"
+          fi
