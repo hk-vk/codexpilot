@@ -62,7 +62,7 @@ jobs:
     needs: tag-check
     name: Build - ${{ matrix.runner }} - ${{ matrix.target }}
     runs-on: ${{ matrix.runs_on || matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.timeout_minutes || 60 }}
     permissions:
       contents: read
       id-token: write
@@ -80,6 +80,7 @@ jobs:
         include:
           - runner: macos-14
             target: aarch64-apple-darwin
+            timeout_minutes: 90
           - runner: macos-14
             target: x86_64-apple-darwin
           - runner: ubuntu-24.04
