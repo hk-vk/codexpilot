@@ -162,6 +162,8 @@ def run_command(cmd: list[str]) -> None:
 
 
 def tarball_name_for_package(package: str, version: str) -> str:
+    if package == "codex":
+        return f"codexpilot-npm-{version}.tgz"
     if package in CODEX_PLATFORM_PACKAGES:
         platform = package.removeprefix("codex-")
         return f"codexpilot-npm-{platform}-{version}.tgz"

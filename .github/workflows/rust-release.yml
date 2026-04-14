@@ -640,6 +640,7 @@ jobs:
           mkdir -p dist/npm
           patterns=(
             "codexpilot-npm-${version}.tgz"
+            "codex-npm-${version}.tgz"
             "codexpilot-npm-linux-*-${version}.tgz"
             "codexpilot-npm-darwin-*-${version}.tgz"
             "codexpilot-npm-win32-*-${version}.tgz"
@@ -682,7 +683,7 @@ jobs:
                 platform="${platform%-${VERSION}.tgz}"
                 tag="${prefix}${platform}"
                 ;;
-              codexpilot-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
+              codexpilot-npm-"${VERSION}".tgz|codex-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
                 tag="${NPM_TAG}"
                 ;;
               *)
