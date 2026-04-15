@@ -183,6 +183,7 @@ if (INSTALLED_PACKAGE_VERSION) {
 const child = spawn(binaryPath, process.argv.slice(2), {
   stdio: "inherit",
   env,
+  argv0: UPDATE_PACKAGE_NAME,
 });
 
 child.on("error", (err) => {
