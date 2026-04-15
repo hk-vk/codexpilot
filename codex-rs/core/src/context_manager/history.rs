@@ -182,19 +182,18 @@ impl ContextManager {
     ///
     /// These payloads can become invalid after switching model providers.
     pub(crate) fn clear_encrypted_reasoning_content(&mut self) {
-        for item in &mut self.items {
-            match item {
-                ResponseItem::Reasoning {
-                    encrypted_content, ..
-                } => {
-                    *encrypted_content = None;
-                }
-                ResponseItem::Compaction { encrypted_content } => {
-                    encrypted_content.clear();
-                }
-                _ => {}
+        self.items.retain_mut(|item| match item {
+            ResponseItem::Reasoning {
+                encrypted_content, ..
+            } => {
+                *encrypted_content = None;
+                true
             }
-        }
+            // Compaction payloads are entirely provider-bound encrypted blobs.
+            // Drop them so retries do not resend unverifiable encrypted content.
+            ResponseItem::Compaction { .. } => false,
+            _ => true,
+        });
     }
 
     /// Replace image content in the last turn if it originated from a tool output.

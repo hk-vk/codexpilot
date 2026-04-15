@@ -6,6 +6,7 @@ use crate::RequestInitiator;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::built_tools;
+use crate::codex::is_invalid_encrypted_content_error;
 use crate::compact::InitialContextInjection;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
 use crate::context_manager::ContextManager;
@@ -312,10 +313,6 @@ fn log_remote_compact_failure(
         compact_error = %err,
         "remote compaction failed"
     );
-}
-
-fn is_invalid_encrypted_content_error(err: &CodexErr) -> bool {
-    matches!(err, CodexErr::InvalidRequest(message) if message.contains("invalid_encrypted_content"))
 }
 
 fn trim_function_call_history_to_fit_context_window(

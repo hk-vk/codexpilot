@@ -178,6 +178,37 @@ fn reasoning_with_encrypted_content(len: usize) -> ResponseItem {
     }
 }
 
+#[test]
+fn clear_encrypted_reasoning_content_removes_compactions_and_redacts_reasoning() {
+    let reasoning = reasoning_with_encrypted_content(/*len*/ 16);
+    let assistant = assistant_msg("assistant output");
+    let mut history = create_history_with_items(vec![
+        reasoning.clone(),
+        ResponseItem::Compaction {
+            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+        },
+        assistant.clone(),
+    ]);
+
+    history.clear_encrypted_reasoning_content();
+
+    let expected_reasoning = match reasoning {
+        ResponseItem::Reasoning {
+            id,
+            summary,
+            content,
+            ..
+        } => ResponseItem::Reasoning {
+            id,
+            summary,
+            content,
+            encrypted_content: None,
+        },
+        _ => panic!("expected reasoning item"),
+    };
+    assert_eq!(history.raw_items(), &[expected_reasoning, assistant],);
+}
+
 fn truncate_exec_output(content: &str) -> String {
     truncate_text(content, TruncationPolicy::Tokens(EXEC_FORMAT_MAX_TOKENS))
 }

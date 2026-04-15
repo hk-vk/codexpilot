@@ -66,6 +66,366 @@ fn github_copilot_request_body_timeout_detection_is_provider_gated() {
     ));
 }
 
+#[test]
+fn invalid_encrypted_content_detection_matches_invalid_request_variant() {
+    let err =
+        CodexErr::InvalidRequest("request failed: invalid_encrypted_content mismatch".to_string());
+
+    assert!(is_invalid_encrypted_content_error(&err));
+}
+
+#[test]
+fn invalid_encrypted_content_detection_matches_unexpected_status_variant() {
+    let err = CodexErr::UnexpectedStatus(UnexpectedResponseError {
+        status: reqwest::StatusCode::BAD_REQUEST,
+        body: r#"{"error":{"message":"Invalid encrypted content in request"}}"#.to_string(),
+        url: Some("https://example.com/responses".to_string()),
+        cf_ray: None,
+        request_id: Some("req_123".to_string()),
+        identity_authorization_error: None,
+        identity_error_code: None,
+    });
+
+    assert!(is_invalid_encrypted_content_error(&err));
+}
+
+#[test]
+fn invalid_encrypted_content_detection_ignores_unrelated_errors() {
+    let err = CodexErr::UnexpectedStatus(UnexpectedResponseError {
+        status: reqwest::StatusCode::BAD_REQUEST,
+        body: r#"{"error":{"message":"Context window exceeded"}}"#.to_string(),
+        url: Some("https://example.com/responses".to_string()),
+        cf_ray: None,
+        request_id: Some("req_123".to_string()),
+        identity_authorization_error: None,
+        identity_error_code: None,
+    });
+
+    assert!(!is_invalid_encrypted_content_error(&err));
+}
+
+#[test]
+fn sanitize_rollout_item_for_native_resume_compat_redacts_reasoning_and_drops_compaction() {
+    let reasoning = ResponseItem::Reasoning {
+        id: "rs_1".to_string(),
+        summary: Vec::new(),
+        content: None,
+        encrypted_content: Some("encrypted".to_string()),
+    };
+    let compacted = ResponseItem::Compaction {
+        encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+    };
+
+    let sanitized_reasoning =
+        sanitize_rollout_item_for_native_resume_compat(RolloutItem::ResponseItem(reasoning))
+            .expect("reasoning item should remain after sanitization");
+    assert_eq!(
+        serde_json::to_value(sanitized_reasoning).expect("serialize sanitized reasoning rollout"),
+        serde_json::to_value(RolloutItem::ResponseItem(ResponseItem::Reasoning {
+            id: "rs_1".to_string(),
+            summary: Vec::new(),
+            content: None,
+            encrypted_content: None,
+        }))
+        .expect("serialize expected reasoning rollout")
+    );
+
+    let sanitized_compaction =
+        sanitize_rollout_item_for_native_resume_compat(RolloutItem::ResponseItem(compacted));
+    assert!(sanitized_compaction.is_none());
+}
+
+#[test]
+fn sanitize_rollout_item_for_native_resume_compat_sanitizes_compacted_replacement_history() {
+    let compacted = RolloutItem::Compacted(CompactedItem {
+        message: "summary".to_string(),
+        replacement_history: Some(vec![
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "hello".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Reasoning {
+                id: "rs_2".to_string(),
+                summary: Vec::new(),
+                content: None,
+                encrypted_content: Some("secret".to_string()),
+            },
+            ResponseItem::Compaction {
+                encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+            },
+        ]),
+    });
+
+    let sanitized = sanitize_rollout_item_for_native_resume_compat(compacted)
+        .expect("compacted rollout item should remain after sanitization");
+    assert_eq!(
+        serde_json::to_value(sanitized).expect("serialize sanitized compacted rollout"),
+        serde_json::to_value(RolloutItem::Compacted(CompactedItem {
+            message: "summary".to_string(),
+            replacement_history: Some(vec![
+                ResponseItem::Message {
+                    id: None,
+                    role: "assistant".to_string(),
+                    content: vec![ContentItem::OutputText {
+                        text: "hello".to_string(),
+                    }],
+                    end_turn: None,
+                    phase: None,
+                },
+                ResponseItem::Reasoning {
+                    id: "rs_2".to_string(),
+                    summary: Vec::new(),
+                    content: None,
+                    encrypted_content: None,
+                },
+            ]),
+        }))
+        .expect("serialize expected compacted rollout")
+    );
+}
+
+#[test]
+fn rollout_items_contains_incompatible_payloads_detects_incompatible_items() {
+    let compatible_items = vec![
+        RolloutItem::ResponseItem(ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "ok".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }),
+        RolloutItem::Compacted(CompactedItem {
+            message: "summary".to_string(),
+            replacement_history: Some(vec![ResponseItem::Reasoning {
+                id: "rs_3".to_string(),
+                summary: Vec::new(),
+                content: None,
+                encrypted_content: None,
+            }]),
+        }),
+    ];
+    assert!(!rollout_items_contains_incompatible_payloads(
+        &compatible_items
+    ));
+
+    let incompatible_items = vec![
+        RolloutItem::ResponseItem(ResponseItem::Reasoning {
+            id: "rs_4".to_string(),
+            summary: Vec::new(),
+            content: None,
+            encrypted_content: Some("encrypted".to_string()),
+        }),
+        RolloutItem::ResponseItem(ResponseItem::Compaction {
+            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+        }),
+    ];
+    assert!(rollout_items_contains_incompatible_payloads(
+        &incompatible_items
+    ));
+
+    let incompatible_then_compatible_checkpoint_items = vec![
+        RolloutItem::ResponseItem(ResponseItem::Reasoning {
+            id: "rs_5".to_string(),
+            summary: Vec::new(),
+            content: None,
+            encrypted_content: Some("encrypted".to_string()),
+        }),
+        RolloutItem::Compacted(CompactedItem {
+            message: "checkpoint".to_string(),
+            replacement_history: Some(vec![ResponseItem::Reasoning {
+                id: "rs_6".to_string(),
+                summary: Vec::new(),
+                content: None,
+                encrypted_content: None,
+            }]),
+        }),
+    ];
+    assert!(rollout_items_contains_incompatible_payloads(
+        &incompatible_then_compatible_checkpoint_items
+    ));
+
+    let compatible_checkpoint_then_late_incompatible_items = vec![
+        RolloutItem::Compacted(CompactedItem {
+            message: "old-checkpoint".to_string(),
+            replacement_history: Some(vec![ResponseItem::Reasoning {
+                id: "rs_7".to_string(),
+                summary: Vec::new(),
+                content: None,
+                encrypted_content: None,
+            }]),
+        }),
+        RolloutItem::ResponseItem(ResponseItem::Compaction {
+            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+        }),
+    ];
+    assert!(rollout_items_contains_incompatible_payloads(
+        &compatible_checkpoint_then_late_incompatible_items
+    ));
+}
+
+#[tokio::test]
+async fn record_initial_history_resumed_rewrites_native_resume_compat_rollout() {
+    let (session, _turn_context) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let rollout_path = attach_rollout_recorder(&session).await;
+
+    session
+        .record_initial_history(InitialHistory::Resumed(ResumedHistory {
+            conversation_id: ThreadId::new(),
+            history: vec![
+                RolloutItem::ResponseItem(user_message("hello")),
+                RolloutItem::ResponseItem(ResponseItem::Reasoning {
+                    id: "rs_checkpoint".to_string(),
+                    summary: Vec::new(),
+                    content: None,
+                    encrypted_content: Some("encrypted".to_string()),
+                }),
+                RolloutItem::ResponseItem(ResponseItem::Compaction {
+                    encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+                }),
+                RolloutItem::ResponseItem(assistant_message("world")),
+            ],
+            rollout_path: rollout_path.clone(),
+        }))
+        .await;
+    session.flush_rollout().await;
+
+    let InitialHistory::Resumed(resumed) = RolloutRecorder::get_rollout_history(&rollout_path)
+        .await
+        .expect("read rollout history")
+    else {
+        panic!("expected resumed rollout history");
+    };
+
+    assert!(
+        resumed.history.iter().all(|item| {
+            !matches!(
+                item,
+                RolloutItem::ResponseItem(ResponseItem::Reasoning {
+                    encrypted_content: Some(_),
+                    ..
+                }) | RolloutItem::ResponseItem(ResponseItem::Compaction { .. })
+            )
+        }),
+        "rewritten rollout should not contain provider-bound encrypted payloads"
+    );
+}
+
+#[tokio::test]
+async fn migrate_legacy_rollout_files_for_native_resume_compat_rewrites_existing_rollouts() {
+    let codex_home = tempfile::tempdir().expect("create temp dir");
+    let sessions_dir = codex_home.path().join("sessions/2026/04/15");
+    let archived_dir = codex_home.path().join("archived_sessions/2026/04/15");
+    tokio::fs::create_dir_all(&sessions_dir)
+        .await
+        .expect("create sessions dir");
+    tokio::fs::create_dir_all(&archived_dir)
+        .await
+        .expect("create archived sessions dir");
+
+    let legacy_rollout_path =
+        sessions_dir.join(format!("rollout-legacy-{}.jsonl", ThreadId::new()));
+    let clean_rollout_path = archived_dir.join(format!("rollout-clean-{}.jsonl", ThreadId::new()));
+
+    let legacy_lines = vec![
+        RolloutLine {
+            timestamp: "2026-04-15T00:00:00Z".to_string(),
+            item: RolloutItem::ResponseItem(user_message("hello")),
+        },
+        RolloutLine {
+            timestamp: "2026-04-15T00:00:01Z".to_string(),
+            item: RolloutItem::ResponseItem(ResponseItem::Reasoning {
+                id: "rs_legacy".to_string(),
+                summary: Vec::new(),
+                content: None,
+                encrypted_content: Some("encrypted".to_string()),
+            }),
+        },
+        RolloutLine {
+            timestamp: "2026-04-15T00:00:02Z".to_string(),
+            item: RolloutItem::Compacted(CompactedItem {
+                message: "summary".to_string(),
+                replacement_history: Some(vec![
+                    ResponseItem::Reasoning {
+                        id: "rs_legacy_compacted".to_string(),
+                        summary: Vec::new(),
+                        content: None,
+                        encrypted_content: Some("encrypted".to_string()),
+                    },
+                    ResponseItem::Compaction {
+                        encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+                    },
+                ]),
+            }),
+        },
+        RolloutLine {
+            timestamp: "2026-04-15T00:00:03Z".to_string(),
+            item: RolloutItem::ResponseItem(ResponseItem::Compaction {
+                encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+            }),
+        },
+    ];
+    let mut legacy_contents = String::new();
+    for line in legacy_lines {
+        let serialized = serde_json::to_string(&line).expect("serialize legacy line");
+        legacy_contents.push_str(&serialized);
+        legacy_contents.push('\n');
+    }
+    tokio::fs::write(&legacy_rollout_path, legacy_contents)
+        .await
+        .expect("write legacy rollout");
+
+    let clean_lines = vec![RolloutLine {
+        timestamp: "2026-04-15T00:00:00Z".to_string(),
+        item: RolloutItem::ResponseItem(assistant_message("hello")),
+    }];
+    let mut clean_contents = String::new();
+    for line in clean_lines {
+        let serialized = serde_json::to_string(&line).expect("serialize clean line");
+        clean_contents.push_str(&serialized);
+        clean_contents.push('\n');
+    }
+    tokio::fs::write(&clean_rollout_path, clean_contents)
+        .await
+        .expect("write clean rollout");
+    let clean_before = tokio::fs::read_to_string(&clean_rollout_path)
+        .await
+        .expect("read clean rollout");
+
+    let (scanned_files, rewritten_files) =
+        migrate_legacy_rollout_files_for_native_resume_compat(codex_home.path())
+            .await
+            .expect("run legacy rollout migration");
+    assert_eq!(scanned_files, 2);
+    assert_eq!(rewritten_files, 1);
+
+    let (legacy_lines, _, _) = RolloutRecorder::load_rollout_lines(&legacy_rollout_path)
+        .await
+        .expect("read migrated rollout");
+    let migrated_items: Vec<RolloutItem> = legacy_lines.into_iter().map(|line| line.item).collect();
+    assert!(!rollout_items_contains_incompatible_payloads(
+        &migrated_items
+    ));
+    assert!(migrated_items.iter().all(|item| {
+        !matches!(
+            item,
+            RolloutItem::ResponseItem(ResponseItem::Compaction { .. })
+        )
+    }));
+
+    let clean_after = tokio::fs::read_to_string(&clean_rollout_path)
+        .await
+        .expect("read clean rollout");
+    assert_eq!(clean_after, clean_before);
+}
+
 #[tokio::test]
 async fn projected_prompt_token_count_includes_pending_turn_items() {
     let (session, mut turn_context) = make_session_and_context().await;

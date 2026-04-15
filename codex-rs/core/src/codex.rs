@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 
 use crate::agent::AgentControl;
@@ -110,6 +111,7 @@ use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::RawResponseItemEvent;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::RolloutLine;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TurnAbortReason;
@@ -125,6 +127,7 @@ use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rmcp_client::ElicitationResponse;
 use codex_rmcp_client::OAuthCredentialsStoreMode;
+use codex_rollout::RolloutRecorder;
 use codex_rollout::state_db;
 use codex_shell_command::parse_command::parse_command;
 use codex_terminal_detection::user_agent;
@@ -285,7 +288,6 @@ use crate::plugins::build_plugin_injections;
 use crate::plugins::render_plugins_section;
 use crate::project_doc::get_user_instructions;
 use crate::resolve_skill_dependencies_for_turn;
-use crate::rollout::RolloutRecorder;
 use crate::rollout::RolloutRecorderParams;
 use crate::rollout::map_session_init_error;
 use crate::rollout::metadata;
@@ -399,6 +401,8 @@ pub struct Codex {
 }
 
 pub(crate) type SessionLoopTermination = Shared<BoxFuture<'static, ()>>;
+
+static LEGACY_NATIVE_RESUME_COMPAT_MIGRATION_ONCE: OnceLock<()> = OnceLock::new();
 
 /// Wrapper returned by [`Codex::spawn`] containing the spawned [`Codex`],
 /// the submission id for the initial `ConfigureSession` request and the
@@ -1515,6 +1519,9 @@ impl Session {
             session_configuration.provider
         );
         let forked_from_id = initial_history.forked_from_id();
+        if !config.ephemeral {
+            maybe_migrate_legacy_rollout_files_for_native_resume_compat(config.as_ref()).await;
+        }
 
         let (conversation_id, rollout_params) = match &initial_history {
             InitialHistory::New | InitialHistory::Forked(_) => {
@@ -2224,8 +2231,19 @@ impl Session {
             }
             InitialHistory::Resumed(resumed_history) => {
                 let rollout_items = resumed_history.history;
+                let needs_native_resume_compat =
+                    rollout_items_contains_incompatible_payloads(&rollout_items);
+                let sanitized_rollout_items = if needs_native_resume_compat {
+                    rollout_items
+                        .iter()
+                        .cloned()
+                        .filter_map(sanitize_rollout_item_for_native_resume_compat)
+                        .collect::<Vec<_>>()
+                } else {
+                    rollout_items.clone()
+                };
                 let previous_turn_settings = self
-                    .apply_rollout_reconstruction(&turn_context, &rollout_items)
+                    .apply_rollout_reconstruction(&turn_context, &sanitized_rollout_items)
                     .await;
 
                 // If resuming, warn when the last recorded model differs from the current one.
@@ -2253,6 +2271,18 @@ impl Session {
                 if let Some(info) = Self::last_token_info_from_rollout(&rollout_items) {
                     let mut state = self.state.lock().await;
                     state.set_token_info(Some(info));
+                }
+
+                // Rewrite the rollout file in place so native Codex can resume the same
+                // session without replaying provider-bound encrypted payloads from the old file.
+                if !is_subagent
+                    && needs_native_resume_compat
+                    && let Err(err) = rewrite_rollout_for_native_resume_compat(
+                        resumed_history.rollout_path.as_path(),
+                    )
+                    .await
+                {
+                    error!("failed to rewrite rollout for native resume compatibility: {err:#}");
                 }
 
                 // Defer seeding the session's initial context until the first turn starts so
@@ -2382,22 +2412,20 @@ impl Session {
                     .is_some_and(|model_provider_id| model_provider_id != previous_provider_id);
                 drop(state);
 
-                if provider_changed {
-                    if let Some(supported_model) = self
+                if provider_changed
+                    && let Some(supported_model) = self
                         .resolve_supported_model_for_provider_change(&updated)
                         .await
-                    {
-                        warn!(
-                            "switched provider to `{}`; model `{}` is unsupported, falling back to `{supported_model}`",
-                            updated.original_config_do_not_use.model_provider_id,
-                            updated.collaboration_mode.model(),
-                        );
-                        updated.collaboration_mode = updated.collaboration_mode.with_updates(
-                            Some(supported_model),
-                            None,
-                            None,
-                        );
-                    }
+                {
+                    warn!(
+                        "switched provider to `{}`; model `{}` is unsupported, falling back to `{supported_model}`",
+                        updated.original_config_do_not_use.model_provider_id,
+                        updated.collaboration_mode.model(),
+                    );
+                    updated.collaboration_mode =
+                        updated
+                            .collaboration_mode
+                            .with_updates(Some(supported_model), None, None);
                 }
 
                 let mut state = self.state.lock().await;
@@ -3871,12 +3899,21 @@ impl Session {
     }
 
     pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) {
+        let sanitized_items: Vec<RolloutItem> = items
+            .iter()
+            .cloned()
+            .filter_map(sanitize_rollout_item_for_native_resume_compat)
+            .collect();
+        if sanitized_items.is_empty() {
+            return;
+        }
+
         let recorder = {
             let guard = self.services.rollout.lock().await;
             guard.clone()
         };
         if let Some(rec) = recorder
-            && let Err(e) = rec.record_items(items).await
+            && let Err(e) = rec.record_items(&sanitized_items).await
         {
             error!("failed to record rollout items: {e:#}");
         }
@@ -6633,6 +6670,189 @@ fn codex_apps_connector_id(tool: &McpToolInfo) -> Option<&str> {
     tool.connector_id.as_deref()
 }
 
+fn sanitize_response_item_for_native_resume_compat(mut item: ResponseItem) -> Option<ResponseItem> {
+    match &mut item {
+        ResponseItem::Reasoning {
+            encrypted_content, ..
+        } => {
+            *encrypted_content = None;
+            Some(item)
+        }
+        // Compaction payloads are provider-bound encrypted blobs that can become
+        // unverifiable when resumed by a different Codex binary/runtime.
+        ResponseItem::Compaction { .. } => None,
+        _ => Some(item),
+    }
+}
+
+fn sanitize_rollout_item_for_native_resume_compat(item: RolloutItem) -> Option<RolloutItem> {
+    match item {
+        RolloutItem::ResponseItem(item) => {
+            sanitize_response_item_for_native_resume_compat(item).map(RolloutItem::ResponseItem)
+        }
+        RolloutItem::Compacted(mut compacted) => {
+            compacted.replacement_history = compacted.replacement_history.map(|history| {
+                history
+                    .into_iter()
+                    .filter_map(sanitize_response_item_for_native_resume_compat)
+                    .collect()
+            });
+            Some(RolloutItem::Compacted(compacted))
+        }
+        RolloutItem::SessionMeta(_) | RolloutItem::TurnContext(_) | RolloutItem::EventMsg(_) => {
+            Some(item)
+        }
+    }
+}
+
+async fn maybe_migrate_legacy_rollout_files_for_native_resume_compat(config: &Config) {
+    if LEGACY_NATIVE_RESUME_COMPAT_MIGRATION_ONCE.set(()).is_err() {
+        return;
+    }
+
+    match migrate_legacy_rollout_files_for_native_resume_compat(config.codex_home.as_path()).await {
+        Ok((scanned_files, rewritten_files)) => {
+            info!(
+                "native resume compatibility migration complete: scanned={scanned_files}, rewritten={rewritten_files}"
+            );
+        }
+        Err(err) => {
+            warn!("native resume compatibility migration failed: {err:#}");
+        }
+    }
+}
+
+async fn migrate_legacy_rollout_files_for_native_resume_compat(
+    primary_root: &Path,
+) -> std::io::Result<(usize, usize)> {
+    let mut scanned_files = 0usize;
+    let mut rewritten_files = 0usize;
+
+    for root in crate::rollout::session_storage_roots(primary_root) {
+        for subdir in [
+            crate::rollout::SESSIONS_SUBDIR,
+            crate::rollout::ARCHIVED_SESSIONS_SUBDIR,
+        ] {
+            let rollout_dir = root.join(subdir);
+            let rollout_paths =
+                collect_rollout_paths_for_native_resume_compat(&rollout_dir).await?;
+            scanned_files = scanned_files.saturating_add(rollout_paths.len());
+            for rollout_path in rollout_paths {
+                if rewrite_rollout_for_native_resume_compat(rollout_path.as_path()).await? {
+                    rewritten_files = rewritten_files.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    Ok((scanned_files, rewritten_files))
+}
+
+async fn collect_rollout_paths_for_native_resume_compat(
+    rollout_dir: &Path,
+) -> std::io::Result<Vec<PathBuf>> {
+    let mut rollout_paths = Vec::new();
+    let mut dirs = vec![rollout_dir.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(err),
+        };
+
+        while let Some(entry) = entries.next_entry().await? {
+            let file_type = match entry.file_type().await {
+                Ok(file_type) => file_type,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err),
+            };
+
+            if file_type.is_dir() {
+                dirs.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let file_name = entry.file_name();
+            let Some(file_name) = file_name.to_str() else {
+                continue;
+            };
+            if file_name.starts_with("rollout-") && file_name.ends_with(".jsonl") {
+                rollout_paths.push(entry.path());
+            }
+        }
+    }
+
+    Ok(rollout_paths)
+}
+
+fn rollout_item_requires_native_resume_compat(item: &RolloutItem) -> bool {
+    match item {
+        RolloutItem::ResponseItem(item) => response_item_requires_native_resume_compat(item),
+        RolloutItem::Compacted(compacted) => {
+            compacted
+                .replacement_history
+                .as_ref()
+                .is_some_and(|history| {
+                    history
+                        .iter()
+                        .any(response_item_requires_native_resume_compat)
+                })
+        }
+        RolloutItem::SessionMeta(_) | RolloutItem::TurnContext(_) | RolloutItem::EventMsg(_) => {
+            false
+        }
+    }
+}
+
+fn rollout_items_contains_incompatible_payloads(items: &[RolloutItem]) -> bool {
+    items.iter().any(rollout_item_requires_native_resume_compat)
+}
+
+fn response_item_requires_native_resume_compat(item: &ResponseItem) -> bool {
+    sanitize_response_item_for_native_resume_compat(item.clone()).as_ref() != Some(item)
+}
+
+async fn rewrite_rollout_for_native_resume_compat(path: &Path) -> std::io::Result<bool> {
+    let (lines, _, parse_errors) = RolloutRecorder::load_rollout_lines(path).await?;
+    if parse_errors > 0 {
+        warn!(
+            "skipping native resume compatibility rewrite due to parse errors: path={}, parse_errors={parse_errors}",
+            path.display()
+        );
+        return Ok(false);
+    }
+    if !lines
+        .iter()
+        .any(|line| rollout_item_requires_native_resume_compat(&line.item))
+    {
+        return Ok(false);
+    }
+
+    let sanitized_lines: Vec<RolloutLine> = lines
+        .into_iter()
+        .filter_map(|line| {
+            sanitize_rollout_item_for_native_resume_compat(line.item).map(|item| RolloutLine {
+                timestamp: line.timestamp,
+                item,
+            })
+        })
+        .collect();
+
+    let mut rendered = String::new();
+    for line in sanitized_lines {
+        let serialized = serde_json::to_string(&line)
+            .map_err(|e| std::io::Error::other(format!("failed to serialize rollout line: {e}")))?;
+        rendered.push_str(&serialized);
+        rendered.push('\n');
+    }
+
+    tokio::fs::write(path, rendered).await?;
+    Ok(true)
+}
+
 pub(crate) fn build_prompt(
     input: Vec<ResponseItem>,
     router: &ToolRouter,
@@ -6670,8 +6890,21 @@ pub(crate) fn build_prompt(
     }
 }
 
-fn is_invalid_encrypted_content_error(err: &CodexErr) -> bool {
-    matches!(err, CodexErr::InvalidRequest(message) if message.contains("invalid_encrypted_content"))
+fn is_invalid_encrypted_content_message(message: &str) -> bool {
+    message.contains("invalid_encrypted_content")
+        || message
+            .to_ascii_lowercase()
+            .contains("invalid encrypted content")
+}
+
+pub(crate) fn is_invalid_encrypted_content_error(err: &CodexErr) -> bool {
+    match err {
+        CodexErr::InvalidRequest(message) => is_invalid_encrypted_content_message(message),
+        CodexErr::UnexpectedStatus(UnexpectedResponseError { body, .. }) => {
+            is_invalid_encrypted_content_message(body)
+        }
+        _ => false,
+    }
 }
 
 fn is_github_copilot_request_body_timeout(err: &CodexErr, provider: &ModelProviderInfo) -> bool {
@@ -6785,7 +7018,7 @@ async fn run_sampling_request(
                 let mut state = sess.state.lock().await;
                 state.clear_encrypted_reasoning_content();
             }
-            client_session.reset_websocket_session();
+            client_session.reset_turn_continuity();
             sess.send_event(
                 &turn_context,
                 EventMsg::Warning(WarningEvent {

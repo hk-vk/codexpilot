@@ -219,6 +219,11 @@ pub struct ModelClientSession {
     /// keep sending it unchanged between turn requests (e.g., for retries, incremental
     /// appends, or continuation requests), and must not send it between different turns.
     turn_state: Arc<OnceLock<String>>,
+    /// Whether to send `prompt_cache_key` on Responses API requests for this turn.
+    ///
+    /// Recovery flows that detect stale encrypted continuity disable this to avoid
+    /// reusing provider-side prompt-cache state that may still reference invalid blobs.
+    use_prompt_cache_key: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -303,6 +308,7 @@ impl ModelClient {
             client: self.clone(),
             websocket_session: self.take_cached_websocket_session(),
             turn_state: Arc::new(OnceLock::new()),
+            use_prompt_cache_key: true,
         }
     }
 
@@ -693,6 +699,16 @@ impl ModelClientSession {
             .set_connection_reused(/*connection_reused*/ false);
     }
 
+    /// Resets all per-turn continuity state used by transport retries.
+    ///
+    /// This clears websocket request/response caches and also discards the sticky
+    /// `x-codex-turn-state` token so the next request starts a fresh continuity chain.
+    pub(crate) fn reset_turn_continuity(&mut self) {
+        self.reset_websocket_session();
+        self.turn_state = Arc::new(OnceLock::new());
+        self.use_prompt_cache_key = false;
+    }
+
     fn build_responses_request(
         &self,
         provider: &codex_api::Provider,
@@ -738,7 +754,9 @@ impl ModelClientSession {
             None
         };
         let text = create_text_param_for_request(verbosity, &prompt.output_schema);
-        let prompt_cache_key = Some(self.client.state.conversation_id.to_string());
+        let prompt_cache_key = self
+            .use_prompt_cache_key
+            .then(|| self.client.state.conversation_id.to_string());
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             instructions: instructions.clone(),

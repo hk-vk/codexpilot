@@ -14,6 +14,8 @@ use codex_model_provider_info::WireApi;
 use codex_model_provider_info::create_oss_provider_with_base_url;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
@@ -312,4 +314,86 @@ fn build_provider_responses_headers_respects_explicit_agent_initiator() {
             .and_then(|value| value.to_str().ok()),
         Some("agent")
     );
+}
+
+#[test]
+fn reset_websocket_session_preserves_turn_state_token() {
+    let client = test_model_client(SessionSource::Cli);
+    let mut session = client.new_session();
+    assert!(session.turn_state.set("sticky-token".to_string()).is_ok());
+
+    session.reset_websocket_session();
+
+    assert_eq!(
+        session.turn_state.get().map(String::as_str),
+        Some("sticky-token")
+    );
+}
+
+#[test]
+fn reset_turn_continuity_clears_turn_state_token() {
+    let client = test_model_client(SessionSource::Cli);
+    let mut session = client.new_session();
+    assert!(session.turn_state.set("old-token".to_string()).is_ok());
+
+    session.reset_turn_continuity();
+
+    assert!(session.turn_state.get().is_none());
+    assert!(session.turn_state.set("new-token".to_string()).is_ok());
+    assert_eq!(
+        session.turn_state.get().map(String::as_str),
+        Some("new-token")
+    );
+}
+
+#[test]
+fn reset_turn_continuity_disables_prompt_cache_key() {
+    let client = test_model_client(SessionSource::Cli);
+    let mut session = client.new_session();
+    let provider = client
+        .state
+        .provider
+        .to_api_provider(/*auth_mode*/ None)
+        .expect("provider should convert to API provider");
+    let model_info = test_model_info();
+    let prompt = crate::Prompt {
+        input: Vec::new(),
+        tools: Vec::new(),
+        parallel_tool_calls: false,
+        base_instructions: BaseInstructions {
+            text: "base instructions".to_string(),
+        },
+        personality: None,
+        request_initiator: RequestInitiator::Auto,
+        output_schema: None,
+    };
+
+    let request_before_reset = session
+        .build_responses_request(
+            &provider,
+            &prompt,
+            &model_info,
+            /*effort*/ None,
+            ReasoningSummaryConfig::None,
+            /*service_tier*/ None,
+        )
+        .expect("request before continuity reset");
+    assert_eq!(
+        request_before_reset.prompt_cache_key,
+        Some(client.state.conversation_id.to_string())
+    );
+
+    session.reset_turn_continuity();
+
+    let request_after_reset = session
+        .build_responses_request(
+            &provider,
+            &prompt,
+            &model_info,
+            /*effort*/ None,
+            ReasoningSummaryConfig::None,
+            /*service_tier*/ None,
+        )
+        .expect("request after continuity reset");
+    assert_eq!(request_after_reset.prompt_cache_key, None);
 }
