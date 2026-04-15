@@ -34,7 +34,6 @@ use crate::text_formatting::truncate_text;
 use crate::tooltips;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 use crate::update_action::UpdateAction;
-use crate::version::CODEX_CLI_VERSION;
 use crate::version::display_cli_version;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
@@ -536,7 +535,7 @@ impl HistoryCell for UpdateAvailableHistoryCell {
                 padded_emoji("✨").bold().cyan(),
                 "Update available!".bold().cyan(),
                 " ",
-                format!("{CODEX_CLI_VERSION} -> {}", self.latest_version).bold(),
+                format!("{} -> {}", display_cli_version(), self.latest_version).bold(),
             ],
             update_instruction,
             "",

@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 /// The current Codex CLI version as embedded at compile time.
 pub const CODEX_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 const VERSION_FILENAME: &str = "version.json";
+const INSTALLED_PACKAGE_VERSION_ENV_VAR: &str = "CODEX_INSTALLED_PACKAGE_VERSION";
 
 static DISPLAY_CLI_VERSION: OnceLock<String> = OnceLock::new();
 
@@ -34,13 +35,25 @@ fn resolve_display_cli_version() -> String {
         }
     }
 
-    resolve_display_cli_version_from_candidates(CODEX_CLI_VERSION, &candidates)
+    let installed_version = std::env::var(INSTALLED_PACKAGE_VERSION_ENV_VAR).ok();
+    resolve_display_cli_version_from_sources(
+        CODEX_CLI_VERSION,
+        installed_version.as_deref(),
+        &candidates,
+    )
 }
 
-fn resolve_display_cli_version_from_candidates(
+fn resolve_display_cli_version_from_sources(
     embedded_version: &str,
+    installed_version: Option<&str>,
     candidates: &[std::path::PathBuf],
 ) -> String {
+    if let Some(installed_version) = installed_version.map(str::trim)
+        && !installed_version.is_empty()
+    {
+        return installed_version.to_string();
+    }
+
     if embedded_version != "0.0.0" {
         return embedded_version.to_string();
     }
@@ -60,7 +73,7 @@ fn resolve_display_cli_version_from_candidates(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_display_cli_version_from_candidates;
+    use super::resolve_display_cli_version_from_sources;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -75,7 +88,7 @@ mod tests {
         .expect("write version file");
 
         assert_eq!(
-            resolve_display_cli_version_from_candidates("0.200.0", &[dir.path().to_path_buf()]),
+            resolve_display_cli_version_from_sources("0.200.0", None, &[dir.path().to_path_buf()]),
             "0.200.0"
         );
     }
@@ -96,8 +109,9 @@ mod tests {
         .expect("write upstream version file");
 
         assert_eq!(
-            resolve_display_cli_version_from_candidates(
+            resolve_display_cli_version_from_sources(
                 "0.0.0",
+                None,
                 &[
                     current_home.path().to_path_buf(),
                     upstream_home.path().to_path_buf(),
@@ -111,8 +125,27 @@ mod tests {
     fn placeholder_version_falls_back_when_no_candidate_file_matches() {
         let missing = PathBuf::from("/tmp/definitely-missing-codexpilot-version-home");
         assert_eq!(
-            resolve_display_cli_version_from_candidates("0.0.0", &[missing]),
+            resolve_display_cli_version_from_sources("0.0.0", None, &[missing]),
             "0.0.0"
+        );
+    }
+
+    #[test]
+    fn installed_package_version_overrides_placeholder_fallback() {
+        let dir = TempDir::new().expect("tempdir");
+        std::fs::write(
+            dir.path().join("version.json"),
+            r#"{"latest_version":"0.118.0"}"#,
+        )
+        .expect("write version file");
+
+        assert_eq!(
+            resolve_display_cli_version_from_sources(
+                "0.0.0",
+                Some("0.0.0-alpha.1"),
+                &[dir.path().to_path_buf()],
+            ),
+            "0.0.0-alpha.1"
         );
     }
 }

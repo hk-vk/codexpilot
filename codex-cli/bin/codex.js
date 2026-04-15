@@ -13,6 +13,13 @@ const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const UPDATE_PACKAGE_NAME = "codexpilot";
 const UPDATE_PACKAGE_DISPLAY_NAME = "CodexPilot";
+const INSTALLED_PACKAGE_VERSION = (() => {
+  try {
+    return require(path.join(__dirname, "..", "package.json")).version || null;
+  } catch {
+    return null;
+  }
+})();
 
 const PLATFORM_PACKAGE_BY_TARGET = {
   "x86_64-unknown-linux-musl": "codexpilot-linux-x64",
@@ -169,6 +176,9 @@ const packageManagerEnvVar =
     ? "CODEX_MANAGED_BY_BUN"
     : "CODEX_MANAGED_BY_NPM";
 env[packageManagerEnvVar] = "1";
+if (INSTALLED_PACKAGE_VERSION) {
+  env.CODEX_INSTALLED_PACKAGE_VERSION = INSTALLED_PACKAGE_VERSION;
+}
 
 const child = spawn(binaryPath, process.argv.slice(2), {
   stdio: "inherit",
