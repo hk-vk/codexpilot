@@ -116,16 +116,7 @@ impl ModelsCacheManager {
     }
 
     async fn load(&self) -> io::Result<Option<ModelsCache>> {
-        if let Some(cache) = load_cache_file(self.cache_path.as_path()).await? {
-            return Ok(Some(cache));
-        }
-        if codex_utils_home_dir::current_app_is_codexpilot()
-            && let Some(upstream_cache_path) = upstream_models_cache_path(self.cache_path.as_path())
-            && let Some(cache) = load_cache_file(upstream_cache_path.as_path()).await?
-        {
-            return Ok(Some(cache));
-        }
-        Ok(None)
+        load_cache_file(self.cache_path.as_path()).await
     }
 
     async fn save_internal(&self, cache: &ModelsCache) -> io::Result<()> {
@@ -182,17 +173,6 @@ async fn load_cache_file(path: &Path) -> io::Result<Option<ModelsCache>> {
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err),
     }
-}
-
-fn upstream_models_cache_path(current_cache_path: &Path) -> Option<PathBuf> {
-    let current_root = current_cache_path.parent()?;
-    let upstream_root = codex_utils_home_dir::find_upstream_codex_home().ok()?;
-    if upstream_root == current_root {
-        return None;
-    }
-    current_cache_path
-        .file_name()
-        .map(|file_name| upstream_root.join(file_name))
 }
 
 /// Serialized snapshot of models and metadata cached on disk.

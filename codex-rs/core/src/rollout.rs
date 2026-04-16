@@ -19,15 +19,7 @@ pub use codex_rollout::find_thread_path_by_name_str;
 pub use codex_rollout::rollout_date_parts;
 
 pub fn session_storage_roots(primary_root: &Path) -> Vec<PathBuf> {
-    let mut roots = vec![primary_root.to_path_buf()];
-    if codex_utils_home_dir::current_app_is_codexpilot()
-        && let Ok(upstream_root) = codex_utils_home_dir::find_upstream_codex_home()
-        && upstream_root != primary_root
-        && upstream_root.exists()
-    {
-        roots.push(upstream_root);
-    }
-    roots
+    vec![primary_root.to_path_buf()]
 }
 
 pub fn storage_root_for_rollout_path(primary_root: &Path, rollout_path: &Path) -> Option<PathBuf> {

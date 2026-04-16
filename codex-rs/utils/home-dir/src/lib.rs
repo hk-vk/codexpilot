@@ -1,6 +1,4 @@
 use dirs::home_dir;
-use std::ffi::OsStr;
-use std::path::Path;
 use std::path::PathBuf;
 
 const CODEX_HOME_ENV_VAR: &str = "CODEX_HOME";
@@ -40,33 +38,19 @@ impl AppHome {
 }
 
 pub fn current_app_home() -> AppHome {
-    app_home_for_exe_name(current_exe_name().as_deref())
-}
-
-fn app_home_for_exe_name(exe_name: Option<&str>) -> AppHome {
-    if exe_name.is_some_and(|name| name.starts_with("codexpilot")) {
-        AppHome::CodexPilot
-    } else {
-        AppHome::Codex
-    }
+    AppHome::CodexPilot
 }
 
 pub fn current_app_is_codexpilot() -> bool {
-    current_app_home() == AppHome::CodexPilot
+    true
 }
 
 pub fn current_app_command_name() -> &'static str {
-    match current_app_home() {
-        AppHome::Codex => "codex",
-        AppHome::CodexPilot => "codexpilot",
-    }
+    "codexpilot"
 }
 
 pub fn current_app_display_name() -> &'static str {
-    match current_app_home() {
-        AppHome::Codex => "OpenAI Codex",
-        AppHome::CodexPilot => "CodexPilot",
-    }
+    "CodexPilot"
 }
 
 pub fn current_app_home_env_var() -> &'static str {
@@ -99,15 +83,6 @@ pub fn find_codex_home() -> std::io::Result<PathBuf> {
         .ok()
         .filter(|val| !val.is_empty());
     find_home_from_env(codex_home_env.as_deref(), app_home)
-}
-
-fn current_exe_name() -> Option<String> {
-    std::env::current_exe()
-        .ok()
-        .as_deref()
-        .and_then(Path::file_name)
-        .and_then(OsStr::to_str)
-        .map(ToOwned::to_owned)
 }
 
 fn find_home_from_env(codex_home_env: Option<&str>, app_home: AppHome) -> std::io::Result<PathBuf> {
@@ -156,7 +131,6 @@ fn find_home_from_env(codex_home_env: Option<&str>, app_home: AppHome) -> std::i
 #[cfg(test)]
 mod tests {
     use super::AppHome;
-    use super::app_home_for_exe_name;
     use super::find_home_from_env;
     use dirs::home_dir;
     use pretty_assertions::assert_eq;
@@ -165,21 +139,11 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn codexpilot_executable_name_selects_codexpilot_home() {
-        assert_eq!(
-            app_home_for_exe_name(Some("codexpilot")),
-            AppHome::CodexPilot
-        );
-        assert_eq!(
-            app_home_for_exe_name(Some("codexpilot-dev")),
-            AppHome::CodexPilot
-        );
-        assert_eq!(app_home_for_exe_name(Some("codex")), AppHome::Codex);
-        assert_eq!(
-            app_home_for_exe_name(Some("codex-app-server")),
-            AppHome::Codex
-        );
-        assert_eq!(app_home_for_exe_name(None), AppHome::Codex);
+    fn current_app_home_is_codexpilot() {
+        assert_eq!(super::current_app_home(), AppHome::CodexPilot);
+        assert!(super::current_app_is_codexpilot());
+        assert_eq!(super::current_app_command_name(), "codexpilot");
+        assert_eq!(super::current_app_display_name(), "CodexPilot");
     }
 
     #[test]

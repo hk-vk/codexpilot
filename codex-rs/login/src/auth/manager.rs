@@ -635,33 +635,6 @@ fn load_auth(
         return Ok(Some(auth));
     }
 
-    if codex_utils_home_dir::current_app_is_codexpilot()
-        && let Ok(upstream_home) = codex_utils_home_dir::find_upstream_codex_home()
-        && upstream_home != codex_home
-    {
-        let upstream_ephemeral_storage =
-            create_auth_storage(upstream_home.clone(), AuthCredentialsStoreMode::Ephemeral);
-        if let Some(auth_dot_json) = upstream_ephemeral_storage.load()? {
-            let auth = build_auth(
-                upstream_home.as_path(),
-                auth_dot_json,
-                AuthCredentialsStoreMode::Ephemeral,
-            )?;
-            return Ok(Some(auth));
-        }
-
-        let upstream_storage =
-            create_auth_storage(upstream_home.clone(), auth_credentials_store_mode);
-        if let Some(auth_dot_json) = upstream_storage.load()? {
-            let auth = build_auth(
-                upstream_home.as_path(),
-                auth_dot_json,
-                auth_credentials_store_mode,
-            )?;
-            return Ok(Some(auth));
-        }
-    }
-
     Ok(None)
 }
 

@@ -48,29 +48,16 @@ fn resolve_client_version_to_whole() -> String {
         return embedded;
     }
 
-    let current_home = codex_utils_home_dir::find_codex_home().ok();
-    let upstream_home = codex_utils_home_dir::find_upstream_codex_home().ok();
-    let mut candidates = Vec::new();
-    if let Some(current_home) = current_home {
-        candidates.push(current_home);
-    }
-    if let Some(upstream_home) = upstream_home {
-        let already_present = candidates
-            .iter()
-            .any(|candidate| candidate == &upstream_home);
-        if !already_present {
-            candidates.push(upstream_home);
-        }
-    }
+    let Some(current_home) = codex_utils_home_dir::find_codex_home().ok() else {
+        return embedded;
+    };
 
-    for home in candidates {
-        let version_file = home.join(VERSION_FILENAME);
-        if let Ok(contents) = std::fs::read_to_string(version_file)
-            && let Ok(info) = serde_json::from_str::<VersionInfo>(&contents)
-            && !info.latest_version.trim().is_empty()
-        {
-            return info.latest_version;
-        }
+    let version_file = current_home.join(VERSION_FILENAME);
+    if let Ok(contents) = std::fs::read_to_string(version_file)
+        && let Ok(info) = serde_json::from_str::<VersionInfo>(&contents)
+        && !info.latest_version.trim().is_empty()
+    {
+        return info.latest_version;
     }
 
     embedded

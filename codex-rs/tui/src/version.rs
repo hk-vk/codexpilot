@@ -20,20 +20,10 @@ pub fn display_cli_version() -> &'static str {
 }
 
 fn resolve_display_cli_version() -> String {
-    let current_home = codex_core::config::find_codex_home().ok();
-    let upstream_home = codex_utils_home_dir::find_upstream_codex_home().ok();
-    let mut candidates = Vec::new();
-    if let Some(current_home) = current_home {
-        candidates.push(current_home);
-    }
-    if let Some(upstream_home) = upstream_home {
-        let already_present = candidates
-            .iter()
-            .any(|candidate| candidate == &upstream_home);
-        if !already_present {
-            candidates.push(upstream_home);
-        }
-    }
+    let candidates = codex_core::config::find_codex_home()
+        .ok()
+        .into_iter()
+        .collect::<Vec<_>>();
 
     let installed_version = std::env::var(INSTALLED_PACKAGE_VERSION_ENV_VAR).ok();
     resolve_display_cli_version_from_sources(
@@ -95,28 +85,15 @@ mod tests {
 
     #[test]
     fn placeholder_version_uses_first_non_empty_version_file() {
-        let current_home = TempDir::new().expect("tempdir");
-        let upstream_home = TempDir::new().expect("tempdir");
+        let home = TempDir::new().expect("tempdir");
         std::fs::write(
-            current_home.path().join("version.json"),
-            r#"{"latest_version":""}"#,
-        )
-        .expect("write empty version file");
-        std::fs::write(
-            upstream_home.path().join("version.json"),
+            home.path().join("version.json"),
             r#"{"latest_version":"0.118.0"}"#,
         )
-        .expect("write upstream version file");
+        .expect("write version file");
 
         assert_eq!(
-            resolve_display_cli_version_from_sources(
-                "0.0.0",
-                None,
-                &[
-                    current_home.path().to_path_buf(),
-                    upstream_home.path().to_path_buf(),
-                ],
-            ),
+            resolve_display_cli_version_from_sources("0.0.0", None, &[home.path().to_path_buf()]),
             "0.118.0"
         );
     }
