@@ -644,8 +644,6 @@ jobs:
             "codexpilot-npm-linux-*-${version}.tgz"
             "codexpilot-npm-darwin-*-${version}.tgz"
             "codexpilot-npm-win32-*-${version}.tgz"
-            "codex-responses-api-proxy-npm-${version}.tgz"
-            "codex-sdk-npm-${version}.tgz"
           )
           for pattern in "${patterns[@]}"; do
             gh release download "$tag" \
@@ -654,11 +652,11 @@ jobs:
               --dir dist/npm
           done
 
-      # No NODE_AUTH_TOKEN needed because we use OIDC.
       - name: Publish to npm
         env:
           VERSION: ${{ needs.release.outputs.version }}
           NPM_TAG: ${{ needs.release.outputs.npm_tag }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           prefix=""
@@ -683,7 +681,7 @@ jobs:
                 platform="${platform%-${VERSION}.tgz}"
                 tag="${prefix}${platform}"
                 ;;
-              codexpilot-npm-"${VERSION}".tgz|codex-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
+              codexpilot-npm-"${VERSION}".tgz|codex-npm-"${VERSION}".tgz)
                 tag="${NPM_TAG}"
                 ;;
               *)
@@ -721,7 +719,7 @@ jobs:
     needs: release
     # Only publish stable/mainline releases to WinGet; pre-releases include a
     # '-' in the semver string (e.g., 1.2.3-alpha.1).
-    if: ${{ !contains(needs.release.outputs.version, '-') }}
+    if: ${{ !contains(needs.release.outputs.version, '-') && github.repository == 'openai/codex' }}
     # This job only invokes a GitHub Action to open/update the winget-pkgs PR;
     # it does not execute Windows-only tooling, so Linux is sufficient.
     runs-on: ubuntu-latest
