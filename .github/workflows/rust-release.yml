@@ -640,7 +640,6 @@ jobs:
           mkdir -p dist/npm
           patterns=(
             "codexpilot-npm-${version}.tgz"
-            "codex-npm-${version}.tgz"
             "codexpilot-npm-linux-*-${version}.tgz"
             "codexpilot-npm-darwin-*-${version}.tgz"
             "codexpilot-npm-win32-*-${version}.tgz"
