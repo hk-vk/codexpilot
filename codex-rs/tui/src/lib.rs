@@ -25,6 +25,7 @@ use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::resolve_oss_provider;
@@ -1085,6 +1086,11 @@ async fn run_ratatui_app(
                 initial_config.cli_auth_credentials_store_mode,
                 initial_config.chatgpt_base_url.clone(),
             );
+            reconcile_github_copilot_provider_on_startup(
+                &initial_config,
+                initial_config.active_profile.as_deref(),
+            )
+            .await?;
         }
 
         // If the user made an explicit trust decision, or we showed the login flow, reload config
@@ -1615,6 +1621,9 @@ impl LoginStatus {
     }
 }
 
+const GITHUB_COPILOT_PROVIDER_ID: &str = "github-copilot";
+const GITHUB_COPILOT_DEFAULT_MODEL: &str = "gpt-5.3-codex";
+
 fn current_codexpilot_command_path() -> String {
     std::env::current_exe()
         .ok()
@@ -1663,6 +1672,10 @@ fn ensure_github_copilot_provider_config(
     Ok(true)
 }
 
+fn should_seed_github_copilot_default_model(model: Option<&str>) -> bool {
+    matches!(model, Some("gpt-5.4-mini") | Some("gpt-5.4"))
+}
+
 pub(crate) async fn reconcile_github_copilot_provider_on_startup(
     config: &Config,
     active_profile: Option<&str>,
@@ -1673,9 +1686,32 @@ pub(crate) async fn reconcile_github_copilot_provider_on_startup(
 
     let wrote_provider =
         ensure_github_copilot_provider_config(&config.codex_home, &auth.api_base_url)?;
-    let _ = active_profile;
 
-    Ok(wrote_provider)
+    let has_codex_auth =
+        CodexAuth::from_auth_storage(&config.codex_home, config.cli_auth_credentials_store_mode)?
+            .is_some();
+
+    let should_switch_to_github_copilot =
+        !has_codex_auth && config.model_provider_id != GITHUB_COPILOT_PROVIDER_ID;
+    let should_seed_default_model =
+        !has_codex_auth && should_seed_github_copilot_default_model(config.model.as_deref());
+
+    if should_switch_to_github_copilot || should_seed_default_model {
+        let mut edits = ConfigEditsBuilder::new(&config.codex_home);
+        if let Some(profile) = active_profile {
+            edits = edits.with_profile(Some(profile));
+        }
+        edits = edits.set_model_provider(Some(GITHUB_COPILOT_PROVIDER_ID));
+        if should_seed_default_model {
+            edits = edits.set_model(Some(GITHUB_COPILOT_DEFAULT_MODEL), None);
+        }
+        edits
+            .apply()
+            .await
+            .map_err(|err| color_eyre::eyre::eyre!(err.to_string()))?;
+    }
+
+    Ok(wrote_provider || should_switch_to_github_copilot || should_seed_default_model)
 }
 
 pub(crate) async fn get_login_status(
@@ -2035,6 +2071,37 @@ mod tests {
         };
 
         assert!(!should_show_login_screen(login_status, &config));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reconcile_github_copilot_provider_switches_github_only_users() -> std::io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        codex_core::config::edit::ConfigEditsBuilder::new(temp_dir.path())
+            .set_model(Some("gpt-5.4-mini"), None)
+            .apply()
+            .await
+            .map_err(std::io::Error::other)?;
+        let config = build_config(&temp_dir).await?;
+        codex_login::github_copilot_storage::save_github_copilot_auth(
+            temp_dir.path(),
+            &codex_login::github_copilot_storage::GitHubCopilotAuth::new(
+                "gho_test".to_string(),
+                "copilot_test".to_string(),
+                chrono::Utc::now() + chrono::Duration::hours(1),
+                "https://api.individual.githubcopilot.com".to_string(),
+                None,
+            ),
+        )?;
+
+        let changed = reconcile_github_copilot_provider_on_startup(&config, None)
+            .await
+            .map_err(std::io::Error::other)?;
+        assert!(changed);
+
+        let reloaded = build_config(&temp_dir).await?;
+        assert_eq!(reloaded.model_provider_id, "github-copilot");
+        assert_eq!(reloaded.model.as_deref(), Some("gpt-5.3-codex"));
         Ok(())
     }
 

@@ -45,6 +45,8 @@ const MODEL_CACHE_FILE: &str = "models_cache.json";
 const DEFAULT_MODEL_CACHE_TTL: Duration = Duration::from_secs(300);
 const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
 const MODELS_ENDPOINT: &str = "/models";
+const GITHUB_COPILOT_PROVIDER_ID: &str = "github-copilot";
+const GITHUB_COPILOT_DEFAULT_MODEL: &str = "gpt-5.3-codex";
 #[derive(Clone)]
 struct ModelsRequestTelemetry {
     auth_mode: Option<String>,
@@ -182,6 +184,7 @@ pub struct ModelsManager {
     auth_manager: Arc<AuthManager>,
     etag: RwLock<Option<String>>,
     cache_manager: ModelsCacheManager,
+    provider_id: String,
     provider: ModelProviderInfo,
 }
 
@@ -219,7 +222,7 @@ impl ModelsManager {
         let auth_manager = required_auth_manager_for_provider(auth_manager, &provider);
         let cache_path = codex_home.join(MODEL_CACHE_FILE);
         let cache_manager =
-            ModelsCacheManager::new(cache_path, DEFAULT_MODEL_CACHE_TTL, provider_id);
+            ModelsCacheManager::new(cache_path, DEFAULT_MODEL_CACHE_TTL, provider_id.clone());
         let catalog_mode = if model_catalog.is_some() {
             CatalogMode::Custom
         } else {
@@ -235,6 +238,7 @@ impl ModelsManager {
             auth_manager,
             etag: RwLock::new(None),
             cache_manager,
+            provider_id,
             provider,
         }
     }
@@ -528,8 +532,26 @@ impl ModelsManager {
         presets = ModelPreset::filter_by_auth(presets, chatgpt_mode);
 
         ModelPreset::mark_default_by_picker_visibility(&mut presets);
+        self.apply_default_model_override(&mut presets);
 
         presets
+    }
+
+    fn apply_default_model_override(&self, presets: &mut [ModelPreset]) {
+        if self.provider_id != GITHUB_COPILOT_PROVIDER_ID {
+            return;
+        }
+
+        let Some(default_index) = presets.iter().position(|preset| {
+            preset.show_in_picker && preset.model == GITHUB_COPILOT_DEFAULT_MODEL
+        }) else {
+            return;
+        };
+
+        for preset in presets.iter_mut() {
+            preset.is_default = false;
+        }
+        presets[default_index].is_default = true;
     }
 
     async fn get_remote_models(&self) -> Vec<ModelInfo> {

@@ -855,6 +855,55 @@ fn build_available_models_picks_default_after_hiding_hidden_models() {
 }
 
 #[test]
+fn build_available_models_prefers_gpt_5_3_codex_for_github_copilot() {
+    let codex_home = tempdir().expect("temp dir");
+    let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
+    let provider = ModelProviderInfo {
+        name: "GitHub Copilot".into(),
+        base_url: Some("https://api.individual.githubcopilot.com".into()),
+        env_key: None,
+        env_key_instructions: None,
+        experimental_bearer_token: None,
+        auth: None,
+        wire_api: WireApi::Responses,
+        query_params: None,
+        http_headers: None,
+        env_http_headers: None,
+        request_max_retries: Some(0),
+        stream_max_retries: Some(0),
+        stream_idle_timeout_ms: Some(5_000),
+        websocket_connect_timeout_ms: None,
+        requires_openai_auth: false,
+        supports_websockets: false,
+    };
+    let manager = ModelsManager::new_with_provider(
+        codex_home.path().to_path_buf(),
+        auth_manager,
+        /*model_catalog*/ None,
+        CollaborationModesConfig::default(),
+        "github-copilot".to_string(),
+        provider,
+    );
+
+    let gpt_5_4 = remote_model("gpt-5.4", "GPT-5.4", /*priority*/ 2);
+    let gpt_5_3_codex = remote_model("gpt-5.3-codex", "GPT-5.3-Codex", /*priority*/ 6);
+
+    let available = manager.build_available_models(vec![gpt_5_4, gpt_5_3_codex]);
+
+    assert_eq!(
+        available.iter().filter(|preset| preset.is_default).count(),
+        1
+    );
+    assert_eq!(
+        available
+            .iter()
+            .find(|preset| preset.is_default)
+            .map(|preset| preset.model.as_str()),
+        Some("gpt-5.3-codex")
+    );
+}
+
+#[test]
 fn bundled_models_json_roundtrips() {
     let response = crate::bundled_models_response()
         .unwrap_or_else(|err| panic!("bundled models.json should parse: {err}"));

@@ -7711,7 +7711,19 @@ impl ChatWidget {
             return;
         }
 
-        let current_provider = self.config.model_provider_id.clone();
+        let has_codex_auth = codex_login::CodexAuth::from_auth_storage(
+            &self.config.codex_home,
+            self.config.cli_auth_credentials_store_mode,
+        )
+        .map(|auth| auth.is_some())
+        .unwrap_or(false);
+        let current_provider =
+            if self.config.model_provider_id == "openai" && !has_codex_auth && has_copilot_provider
+            {
+                "github-copilot".to_string()
+            } else {
+                self.config.model_provider_id.clone()
+            };
         let items = vec![
             SelectionItem {
                 name: "OpenAI".to_string(),

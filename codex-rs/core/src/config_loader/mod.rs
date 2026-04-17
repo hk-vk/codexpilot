@@ -760,6 +760,13 @@ async fn load_project_layers(
     let codex_home_abs = AbsolutePathBuf::from_absolute_path(codex_home)?;
     let codex_home_normalized =
         normalize_path(codex_home_abs.as_path()).unwrap_or_else(|_| codex_home_abs.to_path_buf());
+    let upstream_codex_home_normalized = if codex_utils_home_dir::current_app_is_codexpilot() {
+        codex_utils_home_dir::find_upstream_codex_home()
+            .ok()
+            .and_then(|path| normalize_path(&path).ok().or(Some(path)))
+    } else {
+        None
+    };
     let mut dirs = cwd
         .as_path()
         .ancestors()
@@ -793,6 +800,12 @@ async fn load_project_layers(
         let dot_codex_normalized =
             normalize_path(dot_codex_abs.as_path()).unwrap_or_else(|_| dot_codex_abs.to_path_buf());
         if dot_codex_abs == codex_home_abs || dot_codex_normalized == codex_home_normalized {
+            continue;
+        }
+        if upstream_codex_home_normalized
+            .as_ref()
+            .is_some_and(|upstream| &dot_codex_normalized == upstream)
+        {
             continue;
         }
         let config_file = dot_codex_abs.join(CONFIG_TOML_FILE)?;

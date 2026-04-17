@@ -3075,6 +3075,17 @@ impl App {
         app_server: &mut AppServerSession,
         provider_id: String,
     ) {
+        if provider_id == "openai"
+            && let Ok(login_status) = crate::get_login_status(app_server, &self.config).await
+            && !login_status.is_codex_authenticated()
+        {
+            self.chat_widget.add_info_message(
+                "Sign in to ChatGPT or add an API key before selecting OpenAI models.".to_string(),
+                /*hint*/ Some("Run /login first.".to_string()),
+            );
+            return;
+        }
+
         if let Some(models) = self.provider_model_presets.get(&provider_id).cloned() {
             self.chat_widget
                 .open_model_popup_with_presets_for_provider(models, Some(&provider_id));
