@@ -22,20 +22,29 @@ pub fn session_storage_roots(primary_root: &Path) -> Vec<PathBuf> {
     vec![primary_root.to_path_buf()]
 }
 
+pub fn session_lookup_roots(primary_root: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![primary_root.to_path_buf()];
+    if let Ok(upstream_root) = codex_utils_home_dir::find_upstream_codex_home()
+        && upstream_root != primary_root
+        && upstream_root.exists()
+    {
+        roots.push(upstream_root);
+    }
+    roots
+}
+
 pub fn storage_root_for_rollout_path(primary_root: &Path, rollout_path: &Path) -> Option<PathBuf> {
-    session_storage_roots(primary_root)
-        .into_iter()
-        .find(|root| {
-            rollout_path.starts_with(root.join(SESSIONS_SUBDIR))
-                || rollout_path.starts_with(root.join(ARCHIVED_SESSIONS_SUBDIR))
-        })
+    session_lookup_roots(primary_root).into_iter().find(|root| {
+        rollout_path.starts_with(root.join(SESSIONS_SUBDIR))
+            || rollout_path.starts_with(root.join(ARCHIVED_SESSIONS_SUBDIR))
+    })
 }
 
 pub async fn find_thread_path_by_id_str_across_roots(
     primary_root: &Path,
     thread_id: &str,
 ) -> std::io::Result<Option<PathBuf>> {
-    for root in session_storage_roots(primary_root) {
+    for root in session_lookup_roots(primary_root) {
         if let Some(path) = codex_rollout::find_thread_path_by_id_str(&root, thread_id).await? {
             return Ok(Some(path));
         }
@@ -47,7 +56,7 @@ pub async fn find_archived_thread_path_by_id_str_across_roots(
     primary_root: &Path,
     thread_id: &str,
 ) -> std::io::Result<Option<PathBuf>> {
-    for root in session_storage_roots(primary_root) {
+    for root in session_lookup_roots(primary_root) {
         if let Some(path) =
             codex_rollout::find_archived_thread_path_by_id_str(&root, thread_id).await?
         {
@@ -61,7 +70,7 @@ pub async fn find_thread_name_by_id_across_roots(
     primary_root: &Path,
     thread_id: &ThreadId,
 ) -> std::io::Result<Option<String>> {
-    for root in session_storage_roots(primary_root) {
+    for root in session_lookup_roots(primary_root) {
         if let Some(name) = codex_rollout::find_thread_name_by_id(&root, thread_id).await? {
             return Ok(Some(name));
         }
@@ -73,7 +82,7 @@ pub async fn find_thread_path_by_name_str_across_roots(
     primary_root: &Path,
     thread_name: &str,
 ) -> std::io::Result<Option<PathBuf>> {
-    for root in session_storage_roots(primary_root) {
+    for root in session_lookup_roots(primary_root) {
         if let Some(path) = codex_rollout::find_thread_path_by_name_str(&root, thread_name).await? {
             return Ok(Some(path));
         }

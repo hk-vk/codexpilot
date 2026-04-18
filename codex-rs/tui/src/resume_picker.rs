@@ -418,6 +418,7 @@ impl Drop for AltScreenGuard<'_> {
 
 struct PickerState {
     codex_home: PathBuf,
+    upstream_codex_home: Option<PathBuf>,
     requester: FrameRequester,
     pagination: PaginationState,
     all_rows: Vec<Row>,
@@ -572,8 +573,12 @@ impl PickerState {
         filter_cwd: Option<PathBuf>,
         action: SessionPickerAction,
     ) -> Self {
+        let upstream_codex_home = codex_utils_home_dir::find_upstream_codex_home()
+            .ok()
+            .filter(|path| path != &codex_home && path.exists());
         Self {
             codex_home,
+            upstream_codex_home,
             requester,
             pagination: PaginationState {
                 next_cursor: None,
@@ -853,6 +858,7 @@ impl PickerState {
             let q = self.query.to_lowercase();
             self.filtered_rows = base_iter.filter(|r| r.matches_query(&q)).cloned().collect();
         }
+        self.group_upstream_codex_rows();
         if self.selected >= self.filtered_rows.len() {
             self.selected = self.filtered_rows.len().saturating_sub(1);
         }
@@ -861,6 +867,27 @@ impl PickerState {
         }
         self.ensure_selected_visible();
         self.request_frame();
+    }
+
+    fn group_upstream_codex_rows(&mut self) {
+        let Some(upstream_codex_home) = self.upstream_codex_home.clone() else {
+            return;
+        };
+        let mut local_rows = Vec::with_capacity(self.filtered_rows.len());
+        let mut upstream_rows = Vec::new();
+        for row in self.filtered_rows.drain(..) {
+            if row
+                .path
+                .as_ref()
+                .is_some_and(|path| path.starts_with(&upstream_codex_home))
+            {
+                upstream_rows.push(row);
+            } else {
+                local_rows.push(row);
+            }
+        }
+        local_rows.extend(upstream_rows);
+        self.filtered_rows = local_rows;
     }
 
     fn row_matches_filter(&self, row: &Row) -> bool {
@@ -1239,9 +1266,7 @@ fn render_list(
         return;
     }
 
-    let capacity = area.height as usize;
     let start = state.scroll_top.min(rows.len().saturating_sub(1));
-    let end = rows.len().min(start + capacity);
     let labels = &metrics.labels;
     let mut y = area.y;
 
@@ -1251,12 +1276,19 @@ fn render_list(
     let max_branch_width = metrics.max_branch_width;
     let max_cwd_width = metrics.max_cwd_width;
 
-    for (idx, (row, (created_label, updated_label, branch_label, cwd_label))) in rows[start..end]
-        .iter()
-        .zip(labels[start..end].iter())
-        .enumerate()
-    {
-        let is_sel = start + idx == state.selected;
+    let mut idx = start;
+    while idx < rows.len() && y < area.y.saturating_add(area.height) {
+        let row = &rows[idx];
+        let (created_label, updated_label, branch_label, cwd_label) = &labels[idx];
+        if should_render_upstream_codex_divider(state, rows, idx) {
+            let rect = Rect::new(area.x, y, area.width, 1);
+            frame.render_widget_ref(render_upstream_codex_divider(area.width), rect);
+            y = y.saturating_add(1);
+            if y >= area.y.saturating_add(area.height) {
+                break;
+            }
+        }
+        let is_sel = idx == state.selected;
         let marker = if is_sel { "> ".bold() } else { "  ".into() };
         let marker_width = 2usize;
         let created_span = if visibility.show_created {
@@ -1346,6 +1378,7 @@ fn render_list(
         let rect = Rect::new(area.x, y, area.width, 1);
         frame.render_widget_ref(line, rect);
         y = y.saturating_add(1);
+        idx += 1;
     }
 
     if state.pagination.loading.is_pending() && y < area.y.saturating_add(area.height) {
@@ -1353,6 +1386,39 @@ fn render_list(
         let rect = Rect::new(area.x, y, area.width, 1);
         frame.render_widget_ref(loading_line, rect);
     }
+}
+
+fn row_is_from_upstream_codex(state: &PickerState, row: &Row) -> bool {
+    let Some(upstream_codex_home) = state.upstream_codex_home.as_ref() else {
+        return false;
+    };
+    let Some(path) = row.path.as_ref() else {
+        return false;
+    };
+    path.starts_with(upstream_codex_home)
+}
+
+fn should_render_upstream_codex_divider(state: &PickerState, rows: &[Row], idx: usize) -> bool {
+    if !row_is_from_upstream_codex(state, &rows[idx]) {
+        return false;
+    }
+    idx == 0 || !row_is_from_upstream_codex(state, &rows[idx - 1])
+}
+
+fn render_upstream_codex_divider(width: u16) -> Line<'static> {
+    let label = " From Codex ";
+    let width = usize::from(width);
+    if width <= label.len() {
+        return Line::from(label.magenta().bold());
+    }
+    let dash_count = width.saturating_sub(label.len());
+    let left = dash_count / 2;
+    let right = dash_count.saturating_sub(left);
+    Line::from(vec![
+        "-".repeat(left).dim(),
+        label.magenta().bold(),
+        "-".repeat(right).dim(),
+    ])
 }
 
 fn render_empty_state_line(state: &PickerState) -> Line<'static> {

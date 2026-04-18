@@ -227,7 +227,6 @@ use codex_core::read_head_for_summary;
 use codex_core::read_session_meta_line;
 use codex_core::rollout_date_parts;
 use codex_core::sandboxing::SandboxPermissions;
-use codex_core::session_storage_roots;
 use codex_core::storage_root_for_rollout_path;
 use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_core::windows_sandbox::WindowsSandboxSetupMode as CoreWindowsSandboxSetupMode;
@@ -4649,7 +4648,7 @@ impl CodexMessageProcessor {
         let fallback_provider = self.config.model_provider_id.clone();
         let (allowed_sources_vec, source_kind_filter) = compute_source_filters(source_kinds);
         let allowed_sources = allowed_sources_vec.as_slice();
-        let storage_roots = session_storage_roots(&self.config.codex_home);
+        let storage_roots = codex_core::session_lookup_roots(&self.config.codex_home);
         if storage_roots.len() > 1 {
             return self
                 .list_threads_across_storage_roots(

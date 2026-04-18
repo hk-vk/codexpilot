@@ -152,6 +152,7 @@ pub use rollout::list::read_session_meta_line;
 pub use rollout::policy::EventPersistenceMode;
 pub use rollout::rollout_date_parts;
 pub use rollout::session_index::find_thread_names_by_ids;
+pub use rollout::session_lookup_roots;
 pub use rollout::session_storage_roots;
 pub use rollout::storage_root_for_rollout_path;
 mod function_tool;
