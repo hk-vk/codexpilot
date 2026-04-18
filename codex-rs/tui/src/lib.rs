@@ -1673,7 +1673,7 @@ fn ensure_github_copilot_provider_config(
 }
 
 fn should_seed_github_copilot_default_model(model: Option<&str>) -> bool {
-    matches!(model, Some("gpt-5.4-mini") | Some("gpt-5.4"))
+    matches!(model, Some("gpt-5.4-mini"))
 }
 
 pub(crate) async fn reconcile_github_copilot_provider_on_startup(
@@ -1693,8 +1693,8 @@ pub(crate) async fn reconcile_github_copilot_provider_on_startup(
 
     let should_switch_to_github_copilot =
         !has_codex_auth && config.model_provider_id != GITHUB_COPILOT_PROVIDER_ID;
-    let should_seed_default_model =
-        !has_codex_auth && should_seed_github_copilot_default_model(config.model.as_deref());
+    let should_seed_default_model = should_switch_to_github_copilot
+        && should_seed_github_copilot_default_model(config.model.as_deref());
 
     if should_switch_to_github_copilot || should_seed_default_model {
         let mut edits = ConfigEditsBuilder::new(&config.codex_home);
