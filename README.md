@@ -1,38 +1,112 @@
-<p align="center"><strong>Codexpilot</strong> is a fork of OpenAI Codex with separate app state and GitHub Copilot support.</p>
+# CodexPilot
+
+<p align="center"><strong>codexpilot - use OpenAI Codex models from your GitHub Copilot subscription in the best harness for Codex models.</strong></p>
+
+```bash
+npm install -g codexpilot
+```
+
+codexpilot is a minimal fork of `openai/codex`.
+
+It keeps its own local state in `~/.codexpilot`, supports switching between OpenAI and GitHub Copilot, and can surface previous Codex sessions in `/resume`.
 
 ---
 
-## Quickstart
+## Install
 
-### Building and running Codexpilot
+Launch it:
 
-Build from source:
-
-```shell
-cd codex-rs
-cargo build -p codex-cli --bin codexpilot
+```bash
+codexpilot
 ```
 
-Run the forked CLI:
+Build from source instead:
 
-```shell
+```bash
+cd codex-rs
+cargo build -p codex-cli --bin codexpilot
 ./target/debug/codexpilot
 ```
 
-### Authentication
+---
 
-`codexpilot` supports its own local app state under `~/.codexpilot` and can authenticate separately from upstream `codex`.
+## What is CodexPilot?
 
-## Docs
+CodexPilot is a separate CLI built on top of the official Codex codebase.
 
-- [**Getting started**](./docs/getting-started.md)
-- [**Authentication**](./docs/authentication.md)
-- [**Configuration**](./docs/config.md)
-- [**Installing & building**](./docs/install.md)
-- [**Contributing**](./docs/contributing.md)
+It keeps its own app identity, auth, config, and runtime state under `~/.codexpilot`.
 
-## Fork attribution
+It can also surface previous upstream Codex sessions in `/resume` without using upstream config as the active runtime config.
 
-Codexpilot is an independent fork of OpenAI Codex. It is not presented as the official OpenAI Codex project.
+---
+
+## Why CodexPilot exists
+
+CodexPilot exists for developers who want:
+
+- Codex-class usage through a GitHub Copilot subscription
+- a separate local app home and fork identity
+- the ability to switch between OpenAI and GitHub Copilot
+- a way to resume older upstream Codex sessions from the fork
+
+---
+
+## Core features
+
+- **GitHub Copilot support** for Codex-class usage in the terminal
+- **Separate app home** under `~/.codexpilot`
+- **Provider switching** between OpenAI and GitHub Copilot
+- **Resume upstream sessions** from `.codex` via `/resume`
+- **`From Codex` section** in the resume picker for upstream sessions
+- **Separate runtime identity** from upstream Codex
+
+---
+
+## Quick usage
+
+Start interactive mode:
+
+```bash
+codexpilot
+```
+
+Run with a prompt:
+
+```bash
+codexpilot "explain this repository"
+```
+
+Useful in-app flows:
+
+- `/login` — authenticate
+- `/model` — switch model/provider
+- `/resume` — resume a previous session
+
+---
+
+## Authentication
+
+CodexPilot keeps its own auth and config separate from upstream Codex.
+
+- CodexPilot state: `~/.codexpilot`
+- Upstream Codex state: `~/.codex`
+
+That separation is intentional. CodexPilot should not accidentally inherit upstream config or runtime behavior. At the same time, the resume flow can intentionally surface upstream sessions when useful.
+
+---
+
+## Documentation
+
+- [Getting started](./docs/getting-started.md)
+- [Authentication](./docs/authentication.md)
+- [Configuration](./docs/config.md)
+- [Installing & building](./docs/install.md)
+- [Contributing](./docs/contributing.md)
+
+---
+
+## Attribution
+
+CodexPilot is an independent fork of OpenAI Codex. It is not the official OpenAI Codex project.
 
 This repository is licensed under the [Apache-2.0 License](LICENSE).
